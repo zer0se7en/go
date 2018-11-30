@@ -37,6 +37,9 @@ go	src=..
 				buildid
 					testdata
 						+
+				xcoff
+					testdata
+						+
 			gofmt
 				gofmt.go
 				gofmt_test.go
@@ -47,6 +50,9 @@ go	src=..
 					google
 						pprof
 							internal
+								binutils
+									testdata
+										+
 								driver
 									testdata
 										+
@@ -177,6 +183,8 @@ go	src=..
 		strconv
 			testdata
 				+
+		testdata
+			+
 		text
 			template
 				testdata

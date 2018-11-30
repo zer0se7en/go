@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"go/build"
+	"internal/goroot"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,11 +58,8 @@ func Import(path string) (m module.Version, dir string, err error) {
 
 	// Is the package in the standard library?
 	if search.IsStandardImportPath(path) {
-		if strings.HasPrefix(path, "golang_org/") {
-			return module.Version{}, filepath.Join(cfg.GOROOT, "src/vendor", path), nil
-		}
-		dir := filepath.Join(cfg.GOROOT, "src", path)
-		if _, err := os.Stat(dir); err == nil {
+		if goroot.IsStandardPackage(cfg.GOROOT, cfg.BuildContext.Compiler, path) {
+			dir := filepath.Join(cfg.GOROOT, "src", path)
 			return module.Version{}, dir, nil
 		}
 	}
@@ -69,8 +67,8 @@ func Import(path string) (m module.Version, dir string, err error) {
 	// -mod=vendor is special.
 	// Everything must be in the main module or the main module's vendor directory.
 	if cfg.BuildMod == "vendor" {
-		mainDir, mainOK := dirInModule(path, Target.Path, ModRoot, true)
-		vendorDir, vendorOK := dirInModule(path, "", filepath.Join(ModRoot, "vendor"), false)
+		mainDir, mainOK := dirInModule(path, Target.Path, ModRoot(), true)
+		vendorDir, vendorOK := dirInModule(path, "", filepath.Join(ModRoot(), "vendor"), false)
 		if mainOK && vendorOK {
 			return module.Version{}, "", fmt.Errorf("ambiguous import: found %s in multiple directories:\n\t%s\n\t%s", path, mainDir, vendorDir)
 		}
@@ -181,7 +179,7 @@ func dirInModule(path, mpath, mdir string, isLocal bool) (dir string, haveGoFile
 	// So we only check local module trees
 	// (the main module, and any directory trees pointed at by replace directives).
 	if isLocal {
-		for d := dir; d != mdir && len(d) > len(mdir); d = filepath.Dir(d) {
+		for d := dir; d != mdir && len(d) > len(mdir); {
 			haveGoMod := haveGoModCache.Do(d, func() interface{} {
 				_, err := os.Stat(filepath.Join(d, "go.mod"))
 				return err == nil
@@ -190,6 +188,13 @@ func dirInModule(path, mpath, mdir string, isLocal bool) (dir string, haveGoFile
 			if haveGoMod {
 				return "", false
 			}
+			parent := filepath.Dir(d)
+			if parent == d {
+				// Break the loop, as otherwise we'd loop
+				// forever if d=="." and mdir=="".
+				break
+			}
+			d = parent
 		}
 	}
 

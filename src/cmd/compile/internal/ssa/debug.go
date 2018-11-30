@@ -153,8 +153,12 @@ var BlockEnd = &Value{
 // RegisterSet is a bitmap of registers, indexed by Register.num.
 type RegisterSet uint64
 
+// logf prints debug-specific logging to stdout (always stdout) if the current
+// function is tagged by GOSSAFUNC (for ssa output directed either to stdout or html).
 func (s *debugState) logf(msg string, args ...interface{}) {
-	s.f.Logf(msg, args...)
+	if s.f.PrintOrHtmlSSA {
+		fmt.Printf(msg, args...)
+	}
 }
 
 type debugState struct {
@@ -535,8 +539,6 @@ func (state *debugState) mergePredecessors(b *Block, blockLocs []*BlockDebug) ([
 	}
 
 	if len(preds) == 0 {
-		if state.loggingEnabled {
-		}
 		state.currentState.reset(nil)
 		return nil, true
 	}
@@ -788,7 +790,7 @@ func (e *pendingEntry) clear() {
 	}
 }
 
-// canMerge returns true if the location description for new is the same as
+// canMerge reports whether the location description for new is the same as
 // pending.
 func canMerge(pending, new VarLoc) bool {
 	if pending.absent() && new.absent() {
@@ -824,6 +826,7 @@ func firstReg(set RegisterSet) uint8 {
 func (state *debugState) buildLocationLists(blockLocs []*BlockDebug) {
 	// Run through the function in program text order, building up location
 	// lists as we go. The heavy lifting has mostly already been done.
+
 	for _, b := range state.f.Blocks {
 		if !blockLocs[b.ID].relevant {
 			continue
@@ -832,13 +835,24 @@ func (state *debugState) buildLocationLists(blockLocs []*BlockDebug) {
 		state.mergePredecessors(b, blockLocs)
 
 		zeroWidthPending := false
+		apcChangedSize := 0 // size of changedVars for leading Args, Phi, ClosurePtr
+		// expect to see values in pattern (apc)* (zerowidth|real)*
 		for _, v := range b.Values {
 			slots := state.valueNames[v.ID]
 			reg, _ := state.f.getHome(v.ID).(*Register)
-			changed := state.processValue(v, slots, reg)
+			changed := state.processValue(v, slots, reg) // changed == added to state.changedVars
 
 			if opcodeTable[v.Op].zeroWidth {
 				if changed {
+					if v.Op == OpArg || v.Op == OpPhi || v.Op.isLoweredGetClosurePtr() {
+						// These ranges begin at true beginning of block, not after first instruction
+						if zeroWidthPending {
+							b.Func.Fatalf("Unexpected op mixed with OpArg/OpPhi/OpLoweredGetClosurePtr at beginning of block %s in %s\n%s", b, b.Func.Name, b.Func)
+						}
+						apcChangedSize = len(state.changedVars.contents())
+						continue
+					}
+					// Other zero-width ops must wait on a "real" op.
 					zeroWidthPending = true
 				}
 				continue
@@ -847,14 +861,26 @@ func (state *debugState) buildLocationLists(blockLocs []*BlockDebug) {
 			if !changed && !zeroWidthPending {
 				continue
 			}
+			// Not zero-width; i.e., a "real" instruction.
 
 			zeroWidthPending = false
-			for _, varID := range state.changedVars.contents() {
-				state.updateVar(VarID(varID), v, state.currentState.slots)
+			for i, varID := range state.changedVars.contents() {
+				if i < apcChangedSize { // buffered true start-of-block changes
+					state.updateVar(VarID(varID), v.Block, BlockStart)
+				} else {
+					state.updateVar(VarID(varID), v.Block, v)
+				}
 			}
 			state.changedVars.clear()
+			apcChangedSize = 0
 		}
-
+		for i, varID := range state.changedVars.contents() {
+			if i < apcChangedSize { // buffered true start-of-block changes
+				state.updateVar(VarID(varID), b, BlockStart)
+			} else {
+				state.updateVar(VarID(varID), b, BlockEnd)
+			}
+		}
 	}
 
 	if state.loggingEnabled {
@@ -876,8 +902,10 @@ func (state *debugState) buildLocationLists(blockLocs []*BlockDebug) {
 }
 
 // updateVar updates the pending location list entry for varID to
-// reflect the new locations in curLoc, caused by v.
-func (state *debugState) updateVar(varID VarID, v *Value, curLoc []VarLoc) {
+// reflect the new locations in curLoc, beginning at v in block b.
+// v may be one of the special values indicating block start or end.
+func (state *debugState) updateVar(varID VarID, b *Block, v *Value) {
+	curLoc := state.currentState.slots
 	// Assemble the location list entry with whatever's live.
 	empty := true
 	for _, slotID := range state.varSlots[varID] {
@@ -888,7 +916,7 @@ func (state *debugState) updateVar(varID VarID, v *Value, curLoc []VarLoc) {
 	}
 	pending := &state.pendingEntries[varID]
 	if empty {
-		state.writePendingEntry(varID, v.Block.ID, v.ID)
+		state.writePendingEntry(varID, b.ID, v.ID)
 		pending.clear()
 		return
 	}
@@ -907,15 +935,13 @@ func (state *debugState) updateVar(varID VarID, v *Value, curLoc []VarLoc) {
 		}
 	}
 
-	state.writePendingEntry(varID, v.Block.ID, v.ID)
+	state.writePendingEntry(varID, b.ID, v.ID)
 	pending.present = true
-	pending.startBlock = v.Block.ID
+	pending.startBlock = b.ID
 	pending.startValue = v.ID
 	for i, slot := range state.varSlots[varID] {
 		pending.pieces[i] = curLoc[slot]
 	}
-	return
-
 }
 
 // writePendingEntry writes out the pending entry for varID, if any,

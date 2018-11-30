@@ -507,6 +507,12 @@ General-purpose environment variables:
 		The directory where the go command will write
 		temporary source files, packages, and binaries.
 
+Each entry in the GOFLAGS list must be a standalone flag.
+Because the entries are space-separated, flag values must
+not contain spaces. In some cases, you can provide multiple flag
+values instead: for example, to set '-ldflags=-s -w'
+you can use 'GOFLAGS=-ldflags=-s -ldflags=-w'.
+
 Environment variables for use with cgo:
 
 	CC
@@ -540,6 +546,10 @@ Environment variables for use with cgo:
 		The command to use to compile C++ code.
 	PKG_CONFIG
 		Path to pkg-config tool.
+	AR
+		The command to use to manipulate library archives when
+		building with the gccgo compiler.
+		The default is 'ar'.
 
 Architecture-specific environment variables:
 

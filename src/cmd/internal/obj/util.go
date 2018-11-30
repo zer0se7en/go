@@ -372,6 +372,17 @@ func Mconv(a *Addr) string {
 		} else {
 			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
 		}
+	case NAME_TOCREF:
+		reg := "SB"
+		if a.Reg != REG_NONE {
+			reg = Rconv(int(a.Reg))
+		}
+		if a.Sym != nil {
+			str = fmt.Sprintf("%s%s(%s)", a.Sym.Name, offConv(a.Offset), reg)
+		} else {
+			str = fmt.Sprintf("%s(%s)", offConv(a.Offset), reg)
+		}
+
 	}
 	return str
 }
@@ -386,7 +397,7 @@ func offConv(off int64) string {
 // opSuffixSet is like regListSet, but for opcode suffixes.
 //
 // Unlike some other similar structures, uint8 space is not
-// divided by it's own values set (because the're only 256 of them).
+// divided by its own values set (because there are only 256 of them).
 // Instead, every arch may interpret/format all 8 bits as they like,
 // as long as they register proper cconv function for it.
 type opSuffixSet struct {
@@ -535,6 +546,7 @@ var Anames = []string{
 	"FUNCDATA",
 	"JMP",
 	"NOP",
+	"PCALIGN",
 	"PCDATA",
 	"RET",
 	"GETCALLERPC",

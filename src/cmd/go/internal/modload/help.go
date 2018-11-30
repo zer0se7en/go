@@ -393,17 +393,20 @@ no /* */ comments. Each line holds a single directive, made up of a
 verb followed by arguments. For example:
 
 	module my/thing
+	go 1.12
 	require other/thing v1.0.2
-	require new/thing v2.3.4
+	require new/thing/v2 v2.3.4
 	exclude old/thing v1.2.3
 	replace bad/thing v1.4.5 => good/thing v1.4.5
 
-The verbs are module, to define the module path; require, to require
-a particular module at a given version or later; exclude, to exclude
-a particular module version from use; and replace, to replace a module
-version with a different module version. Exclude and replace apply only
-in the main module's go.mod and are ignored in dependencies.
-See https://research.swtch.com/vgo-mvs for details.
+The verbs are
+	module, to define the module path;
+	go, to set the expected language version;
+	require, to require a particular module at a given version or later;
+	exclude, to exclude a particular module version from use; and
+	replace, to replace a module version with a different module version.
+Exclude and replace apply only in the main module's go.mod and are ignored
+in dependencies.  See https://research.swtch.com/vgo-mvs for details.
 
 The leading verb can be factored out of adjacent lines to create a block,
 like in Go imports:
@@ -420,7 +423,19 @@ See 'go help mod edit'.
 
 The go command automatically updates go.mod each time it uses the
 module graph, to make sure go.mod always accurately reflects reality
-and is properly formatted.
+and is properly formatted. For example, consider this go.mod file:
+
+        module M
+
+        require (
+                A v1
+                B v1.0.0
+                C v1.0.0
+                D v1.2.3
+                E dev
+        )
+
+        exclude D v1.2.3
 
 The update rewrites non-canonical version identifiers to semver form,
 so A's v1 becomes v1.0.0 and E's dev becomes the pseudo-version for the
