@@ -102,8 +102,8 @@ data, defined in detail in the corresponding sections that follow.
 		If the value of the pipeline has length zero, nothing is output;
 		otherwise, dot is set to the successive elements of the array,
 		slice, or map and T1 is executed. If the value is a map and the
-		keys are of basic type with a defined order ("comparable"), the
-		elements will be visited in sorted key order.
+		keys are of basic type with a defined order, the elements will be
+		visited in sorted key order.
 
 	{{range pipeline}} T1 {{else}} T0 {{end}}
 		The value of the pipeline must be an array, slice, map, or channel.
@@ -328,6 +328,11 @@ Predefined global functions are named as follows.
 		Returns the result of indexing its first argument by the
 		following arguments. Thus "index x 1 2 3" is, in Go syntax,
 		x[1][2][3]. Each indexed item must be a map, slice, or array.
+	slice
+		slice returns the result of slicing its first argument by the
+		remaining arguments. Thus "slice x 1 2" is, in Go syntax, x[1:2],
+		while "slice x" is x[:], "slice x 1" is x[1:], and "slice x 1 2 3"
+		is x[1:2:3]. The first argument must be a string, slice, or array.
 	js
 		Returns the escaped JavaScript equivalent of the textual
 		representation of its arguments.

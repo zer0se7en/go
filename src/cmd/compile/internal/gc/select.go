@@ -12,7 +12,7 @@ func typecheckselect(sel *Node) {
 	lno := setlineno(sel)
 	typecheckslice(sel.Ninit.Slice(), ctxStmt)
 	for _, ncase := range sel.List.Slice() {
-		if ncase.Op != OXCASE {
+		if ncase.Op != OCASE {
 			setlineno(ncase)
 			Fatalf("typecheckselect %v", ncase.Op)
 		}
@@ -388,7 +388,7 @@ func scasetype() *types.Type {
 			namedfield("elem", types.Types[TUNSAFEPTR]),
 			namedfield("kind", types.Types[TUINT16]),
 			namedfield("pc", types.Types[TUINTPTR]),
-			namedfield("releasetime", types.Types[TUINT64]),
+			namedfield("releasetime", types.Types[TINT64]),
 		})
 		scase.SetNoalg(true)
 	}

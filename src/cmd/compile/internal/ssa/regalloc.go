@@ -411,7 +411,7 @@ func (s *regAllocState) allocReg(mask regMask, v *Value) register {
 
 	if s.f.Config.ctxt.Arch.Arch == sys.ArchWasm {
 		// TODO(neelance): In theory this should never happen, because all wasm registers are equal.
-		// So if there is still a free register, the allocation should have picked that one in the first place insead of
+		// So if there is still a free register, the allocation should have picked that one in the first place instead of
 		// trying to kick some other value out. In practice, this case does happen and it breaks the stack optimization.
 		s.freeReg(r)
 		return r
@@ -489,7 +489,7 @@ func (s *regAllocState) allocValToReg(v *Value, mask regMask, nospill bool, pos 
 	}
 
 	var r register
-	// If nospill is set, the value is used immedately, so it can live on the WebAssembly stack.
+	// If nospill is set, the value is used immediately, so it can live on the WebAssembly stack.
 	onWasmStack := nospill && s.f.Config.ctxt.Arch.Arch == sys.ArchWasm
 	if !onWasmStack {
 		// Allocate a register.
@@ -651,8 +651,14 @@ func (s *regAllocState) init(f *Func) {
 	}
 
 	s.regs = make([]regState, s.numRegs)
-	s.values = make([]valState, f.NumValues())
-	s.orig = make([]*Value, f.NumValues())
+	nv := f.NumValues()
+	if cap(s.f.Cache.regallocValues) >= nv {
+		s.f.Cache.regallocValues = s.f.Cache.regallocValues[:nv]
+	} else {
+		s.f.Cache.regallocValues = make([]valState, nv)
+	}
+	s.values = s.f.Cache.regallocValues
+	s.orig = make([]*Value, nv)
 	s.copies = make(map[*Value]bool)
 	for _, b := range s.visitOrder {
 		for _, v := range b.Values {
@@ -1220,6 +1226,13 @@ func (s *regAllocState) regalloc(f *Func) {
 					// This forces later liveness analysis to make the
 					// value live at this point.
 					v.SetArg(0, s.makeSpill(a, b))
+				} else if _, ok := a.Aux.(GCNode); ok && vi.rematerializeable {
+					// Rematerializeable value with a gc.Node. This is the address of
+					// a stack object (e.g. an LEAQ). Keep the object live.
+					// Change it to VarLive, which is what plive expects for locals.
+					v.Op = OpVarLive
+					v.SetArgs1(v.Args[1])
+					v.Aux = a.Aux
 				} else {
 					// In-register and rematerializeable values are already live.
 					// These are typically rematerializeable constants like nil,
@@ -1442,7 +1455,7 @@ func (s *regAllocState) regalloc(f *Func) {
 						}
 					}
 					// Avoid registers we're saving for other values.
-					if mask&^desired.avoid != 0 {
+					if mask&^desired.avoid&^s.nospill != 0 {
 						mask &^= desired.avoid
 					}
 					r := s.allocReg(mask, v)

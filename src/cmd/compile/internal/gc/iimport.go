@@ -117,7 +117,7 @@ func iimport(pkg *types.Pkg, in *bio.Reader) {
 	stringData := data[:sLen]
 	declData := data[sLen:]
 
-	in.Seek(int64(sLen+dLen), os.SEEK_CUR)
+	in.MustSeek(int64(sLen+dLen), os.SEEK_CUR)
 
 	p := &iimporter{
 		ipkg: pkg,
@@ -298,21 +298,10 @@ func (r *importReader) doDecl(n *Node) {
 
 		// We also need to defer width calculations until
 		// after the underlying type has been assigned.
-		//
-		// TODO(mdempsky): Add nesting support directly to
-		// {defer,resume}checkwidth? Width calculations are
-		// already deferred during initial typechecking, but
-		// not when we're expanding inline function bodies, so
-		// we currently need to handle both cases here.
-		deferring := defercalc != 0
-		if !deferring {
-			defercheckwidth()
-		}
+		defercheckwidth()
 		underlying := r.typ()
-		copytype(typenod(t), underlying)
-		if !deferring {
-			resumecheckwidth()
-		}
+		setUnderlying(t, underlying)
+		resumecheckwidth()
 
 		if underlying.IsInterface() {
 			break
@@ -385,8 +374,6 @@ func (p *importReader) value() (typ *types.Type, v Val) {
 		p.float(&x.Imag, typ)
 		v.U = x
 	}
-
-	typ = idealType(typ)
 	return
 }
 
@@ -907,7 +894,9 @@ func (r *importReader) node() *Node {
 	// 	unreachable - mapped to OCALL case below by exporter
 
 	case OCALL:
-		n := nodl(r.pos(), OCALL, r.expr(), nil)
+		n := nodl(r.pos(), OCALL, nil, nil)
+		n.Ninit.Set(r.stmtList())
+		n.Left = r.expr()
 		n.List.Set(r.exprList())
 		n.SetIsDDD(r.bool())
 		return n
@@ -1014,19 +1003,13 @@ func (r *importReader) node() *Node {
 		n.List.Set(r.stmtList())
 		return n
 
-	// case OCASE, OXCASE:
-	// 	unreachable - mapped to OXCASE case below by exporter
-
-	case OXCASE:
-		n := nodl(r.pos(), OXCASE, nil, nil)
+	case OCASE:
+		n := nodl(r.pos(), OCASE, nil, nil)
 		n.List.Set(r.exprList())
 		// TODO(gri) eventually we must declare variables for type switch
 		// statements (type switch statements are not yet exported)
 		n.Nbody.Set(r.stmtList())
 		return n
-
-	// case OFALL:
-	// 	unreachable - mapped to OXFALL case below by exporter
 
 	case OFALL:
 		n := nodl(r.pos(), OFALL, nil, nil)
@@ -1053,7 +1036,7 @@ func (r *importReader) node() *Node {
 
 	default:
 		Fatalf("cannot import %v (%d) node\n"+
-			"==> please file an issue and assign to gri@\n", op, int(op))
+			"\t==> please file an issue and assign to gri@", op, int(op))
 		panic("unreachable") // satisfy compiler
 	}
 }

@@ -242,7 +242,7 @@ func (s *mspan) nextFreeIndex() uintptr {
 	return result
 }
 
-// isFree returns whether the index'th object in s is unallocated.
+// isFree reports whether the index'th object in s is unallocated.
 func (s *mspan) isFree(index uintptr) bool {
 	if index < s.freeindex {
 		return false
@@ -581,7 +581,7 @@ func (h heapBits) setCheckmarked(size uintptr) {
 // The pointer bitmap is not maintained for allocations containing
 // no pointers at all; any caller of bulkBarrierPreWrite must first
 // make sure the underlying allocation contains pointers, usually
-// by checking typ.kind&kindNoPointers.
+// by checking typ.ptrdata.
 //
 // Callers must perform cgo checks if writeBarrier.cgo.
 //
@@ -1667,15 +1667,12 @@ Run:
 			if n == 0 {
 				// Program is over; continue in trailer if present.
 				if trailer != nil {
-					//println("trailer")
 					p = trailer
 					trailer = nil
 					continue
 				}
-				//println("done")
 				break Run
 			}
-			//println("lit", n, dst)
 			nbyte := n / 8
 			for i := uintptr(0); i < nbyte; i++ {
 				bits |= uintptr(*p) << nbits

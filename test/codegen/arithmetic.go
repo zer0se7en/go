@@ -15,6 +15,7 @@ package codegen
 // ----------------- //
 
 var ef int
+
 func SubMem(arr []int, b, c, d int) int {
 	// 386:`SUBL\s[A-Z]+,\s8\([A-Z]+\)`
 	// amd64:`SUBQ\s[A-Z]+,\s16\([A-Z]+\)`
@@ -66,7 +67,10 @@ func Pow2Muls(n1, n2 int) (int, int) {
 }
 
 func Mul_96(n int) int {
-	// amd64:`SHLQ\t[$]5`,`LEAQ\t\(.*\)\(.*\*2\),`
+	// amd64:`SHLQ\t[$]5`,`LEAQ\t\(.*\)\(.*\*2\),`,-`IMULQ`
+	// 386:`SHLL\t[$]5`,`LEAL\t\(.*\)\(.*\*2\),`,-`IMULL`
+	// arm64:`LSL\t[$]5`,`ADD\sR[0-9]+<<1,\sR[0-9]+`,-`MUL`
+	// arm:`SLL\t[$]5`,`ADD\sR[0-9]+<<1,\sR[0-9]+`,-`MUL`
 	return n * 96
 }
 
@@ -74,6 +78,7 @@ func MulMemSrc(a []uint32, b []float32) {
 	// 386:`IMULL\s4\([A-Z]+\),\s[A-Z]+`
 	a[0] *= a[1]
 	// 386/sse2:`MULSS\s4\([A-Z]+\),\sX[0-9]+`
+	// amd64:`MULSS\s4\([A-Z]+\),\sX[0-9]+`
 	b[0] *= b[1]
 }
 
@@ -115,6 +120,7 @@ func MergeMuls5(a, n int) int {
 
 func DivMemSrc(a []float64) {
 	// 386/sse2:`DIVSD\s8\([A-Z]+\),\sX[0-9]+`
+	// amd64:`DIVSD\s8\([A-Z]+\),\sX[0-9]+`
 	a[0] /= a[1]
 }
 
@@ -141,9 +147,15 @@ func Pow2Divs(n1 uint, n2 int) (uint, int) {
 // Check that constant divisions get turned into MULs
 func ConstDivs(n1 uint, n2 int) (uint, int) {
 	// amd64:"MOVQ\t[$]-1085102592571150095","MULQ",-"DIVQ"
+	// 386:"MOVL\t[$]-252645135","MULL",-"DIVL"
+	// arm64:`MOVD`,`UMULH`,-`DIV`
+	// arm:`MOVW`,`MUL`,-`.*udiv`
 	a := n1 / 17 // unsigned
 
 	// amd64:"MOVQ\t[$]-1085102592571150095","IMULQ",-"IDIVQ"
+	// 386:"MOVL\t[$]-252645135","IMULL",-"IDIVL"
+	// arm64:`MOVD`,`SMULH`,-`DIV`
+	// arm:`MOVW`,`MUL`,-`.*udiv`
 	b := n2 / 17 // signed
 
 	return a, b
@@ -151,6 +163,7 @@ func ConstDivs(n1 uint, n2 int) (uint, int) {
 
 func FloatDivs(a []float32) float32 {
 	// amd64:`DIVSS\s8\([A-Z]+\),\sX[0-9]+`
+	// 386/sse2:`DIVSS\s8\([A-Z]+\),\sX[0-9]+`
 	return a[1] / a[2]
 }
 
@@ -163,24 +176,80 @@ func Pow2Mods(n1 uint, n2 int) (uint, int) {
 	// ppc64le:"ANDCC\t[$]31"
 	a := n1 % 32 // unsigned
 
-	// 386:-"IDIVL"
-	// amd64:-"IDIVQ"
-	// arm:-".*udiv"
-	// arm64:-"REM"
+	// 386:"SHRL",-"IDIVL"
+	// amd64:"SHRQ",-"IDIVQ"
+	// arm:"SRA",-".*udiv"
+	// arm64:"ASR",-"REM"
+	// ppc64:"SRAD"
+	// ppc64le:"SRAD"
 	b := n2 % 64 // signed
 
 	return a, b
 }
 
+// Check that signed divisibility checks get converted to AND on low bits
+func Pow2DivisibleSigned(n int) bool {
+	// 386:"TESTL\t[$]63",-"DIVL",-"SHRL"
+	// amd64:"TESTQ\t[$]63",-"DIVQ",-"SHRQ"
+	// arm:"AND\t[$]63",-".*udiv",-"SRA"
+	// arm64:"AND\t[$]63",-"UDIV",-"ASR"
+	// ppc64:"ANDCC\t[$]63",-"SRAD"
+	// ppc64le:"ANDCC\t[$]63",-"SRAD"
+	return n%64 == 0 // signed
+}
+
 // Check that constant modulo divs get turned into MULs
 func ConstMods(n1 uint, n2 int) (uint, int) {
 	// amd64:"MOVQ\t[$]-1085102592571150095","MULQ",-"DIVQ"
+	// 386:"MOVL\t[$]-252645135","MULL",-"DIVL"
+	// arm64:`MOVD`,`UMULH`,-`DIV`
+	// arm:`MOVW`,`MUL`,-`.*udiv`
 	a := n1 % 17 // unsigned
 
 	// amd64:"MOVQ\t[$]-1085102592571150095","IMULQ",-"IDIVQ"
+	// 386:"MOVL\t[$]-252645135","IMULL",-"IDIVL"
+	// arm64:`MOVD`,`SMULH`,-`DIV`
+	// arm:`MOVW`,`MUL`,-`.*udiv`
 	b := n2 % 17 // signed
 
 	return a, b
+}
+
+// Check that divisibility checks x%c==0 are converted to MULs and rotates
+func Divisible(n1 uint, n2 int) (bool, bool, bool, bool) {
+	// amd64:"MOVQ\t[$]-6148914691236517205","IMULQ","ROLQ\t[$]63",-"DIVQ"
+	// 386:"IMUL3L\t[$]-1431655765","ROLL\t[$]31",-"DIVQ"
+	// arm64:"MOVD\t[$]-6148914691236517205","MUL","ROR",-"DIV"
+	// arm:"MUL","CMP\t[$]715827882",-".*udiv"
+	// ppc64:"MULLD","ROTL\t[$]63"
+	// ppc64le:"MULLD","ROTL\t[$]63"
+	evenU := n1%6 == 0
+
+	// amd64:"MOVQ\t[$]-8737931403336103397","IMULQ",-"ROLQ",-"DIVQ"
+	// 386:"IMUL3L\t[$]678152731",-"ROLL",-"DIVQ"
+	// arm64:"MOVD\t[$]-8737931403336103397","MUL",-"ROR",-"DIV"
+	// arm:"MUL","CMP\t[$]226050910",-".*udiv"
+	// ppc64:"MULLD",-"ROTL"
+	// ppc64le:"MULLD",-"ROTL"
+	oddU := n1%19 == 0
+
+	// amd64:"IMULQ","ADD","ROLQ\t[$]63",-"DIVQ"
+	// 386:"IMUL3L\t[$]-1431655765","ADDL\t[$]715827882","ROLL\t[$]31",-"DIVQ"
+	// arm64:"MUL","ADD\t[$]3074457345618258602","ROR",-"DIV"
+	// arm:"MUL","ADD\t[$]715827882",-".*udiv"
+	// ppc64:"MULLD","ADD","ROTL\t[$]63"
+	// ppc64le:"MULLD","ADD","ROTL\t[$]63"
+	evenS := n2%6 == 0
+
+	// amd64:"IMULQ","ADD",-"ROLQ",-"DIVQ"
+	// 386:"IMUL3L\t[$]678152731","ADDL\t[$]113025455",-"ROLL",-"DIVQ"
+	// arm64:"MUL","ADD\t[$]485440633518672410",-"ROR",-"DIV"
+	// arm:"MUL","ADD\t[$]113025455",-".*udiv"
+	// ppc64:"MULLD","ADD",-"ROTL"
+	// ppc64le:"MULLD","ADD",-"ROTL"
+	oddS := n2%19 == 0
+
+	return evenU, oddU, evenS, oddS
 }
 
 // Check that fix-up code is not generated for divisions where it has been proven that
@@ -270,6 +339,8 @@ func NoFix16B(divd int16) (int16, int16) {
 func LenDiv1(a []int) int {
 	// 386:"SHRL\t[$]10"
 	// amd64:"SHRQ\t[$]10"
+	// arm64:"LSR\t[$]10",-"SDIV"
+	// arm:"SRL\t[$]10",-".*udiv"
 	// ppc64:"SRD"\t[$]10"
 	// ppc64le:"SRD"\t[$]10"
 	return len(a) / 1024
@@ -278,6 +349,8 @@ func LenDiv1(a []int) int {
 func LenDiv2(s string) int {
 	// 386:"SHRL\t[$]11"
 	// amd64:"SHRQ\t[$]11"
+	// arm64:"LSR\t[$]11",-"SDIV"
+	// arm:"SRL\t[$]11",-".*udiv"
 	// ppc64:"SRD\t[$]11"
 	// ppc64le:"SRD\t[$]11"
 	return len(s) / (4097 >> 1)
@@ -286,6 +359,9 @@ func LenDiv2(s string) int {
 func LenMod1(a []int) int {
 	// 386:"ANDL\t[$]1023"
 	// amd64:"ANDQ\t[$]1023"
+	// arm64:"AND\t[$]1023",-"SDIV"
+	// arm/6:"AND",-".*udiv"
+	// arm/7:"BFC",-".*udiv",-"AND"
 	// ppc64:"ANDCC\t[$]1023"
 	// ppc64le:"ANDCC\t[$]1023"
 	return len(a) % 1024
@@ -294,6 +370,9 @@ func LenMod1(a []int) int {
 func LenMod2(s string) int {
 	// 386:"ANDL\t[$]2047"
 	// amd64:"ANDQ\t[$]2047"
+	// arm64:"AND\t[$]2047",-"SDIV"
+	// arm/6:"AND",-".*udiv"
+	// arm/7:"BFC",-".*udiv",-"AND"
 	// ppc64:"ANDCC\t[$]2047"
 	// ppc64le:"ANDCC\t[$]2047"
 	return len(s) % (4097 >> 1)
@@ -302,6 +381,8 @@ func LenMod2(s string) int {
 func CapDiv(a []int) int {
 	// 386:"SHRL\t[$]12"
 	// amd64:"SHRQ\t[$]12"
+	// arm64:"LSR\t[$]12",-"SDIV"
+	// arm:"SRL\t[$]12",-".*udiv"
 	// ppc64:"SRD\t[$]12"
 	// ppc64le:"SRD\t[$]12"
 	return cap(a) / ((1 << 11) + 2048)
@@ -310,6 +391,9 @@ func CapDiv(a []int) int {
 func CapMod(a []int) int {
 	// 386:"ANDL\t[$]4095"
 	// amd64:"ANDQ\t[$]4095"
+	// arm64:"AND\t[$]4095",-"SDIV"
+	// arm/6:"AND",-".*udiv"
+	// arm/7:"BFC",-".*udiv",-"AND"
 	// ppc64:"ANDCC\t[$]4095"
 	// ppc64le:"ANDCC\t[$]4095"
 	return cap(a) % ((1 << 11) + 2048)
@@ -346,4 +430,14 @@ func MULS(a, b, c uint32) (uint32, uint32, uint32) {
 	// arm64:`SUB`,-`MSUBW`,-`MULW`
 	r2 := c - b*64
 	return r0, r1, r2
+}
+
+func addSpecial(a, b, c uint32) (uint32, uint32, uint32) {
+	// amd64:`INCL`
+	a++
+	// amd64:`DECL`
+	b--
+	// amd64:`SUBL.*-128`
+	c += 128
+	return a, b, c
 }

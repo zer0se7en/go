@@ -11,12 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"testing"
 )
 
 type importerTest struct {
 	pkgpath, name, want, wantval string
 	wantinits                    []string
+	gccgoVersion                 int // minimum gccgo version (0 => any)
 }
 
 func runImporterTest(t *testing.T, imp Importer, initmap map[*types.Package]InitData, test *importerTest) {
@@ -69,6 +72,8 @@ func runImporterTest(t *testing.T, imp Importer, initmap map[*types.Package]Init
 	}
 }
 
+// When adding tests to this list, be sure to set the 'gccgoVersion'
+// field if the testcases uses a "recent" Go addition (ex: aliases).
 var importerTests = [...]importerTest{
 	{pkgpath: "pointer", name: "Int8Ptr", want: "type Int8Ptr *int8"},
 	{pkgpath: "complexnums", name: "NN", want: "const NN untyped complex", wantval: "(-1 + -1i)"},
@@ -82,10 +87,16 @@ var importerTests = [...]importerTest{
 	{pkgpath: "unicode", name: "MaxRune", want: "const MaxRune untyped rune", wantval: "1114111"},
 	{pkgpath: "imports", wantinits: []string{"imports..import", "fmt..import"}},
 	{pkgpath: "importsar", name: "Hello", want: "var Hello string"},
-	{pkgpath: "aliases", name: "A14", want: "type A14 = func(int, T0) chan T2"},
-	{pkgpath: "aliases", name: "C0", want: "type C0 struct{f1 C1; f2 C1}"},
+	{pkgpath: "aliases", name: "A14", gccgoVersion: 7, want: "type A14 = func(int, T0) chan T2"},
+	{pkgpath: "aliases", name: "C0", gccgoVersion: 7, want: "type C0 struct{f1 C1; f2 C1}"},
 	{pkgpath: "escapeinfo", name: "NewT", want: "func NewT(data []byte) *T"},
-	{pkgpath: "issue27856", name: "M", want: "type M struct{E F}"},
+	{pkgpath: "issue27856", name: "M", gccgoVersion: 7, want: "type M struct{E F}"},
+	{pkgpath: "v1reflect", name: "Type", want: "type Type interface{Align() int; AssignableTo(u Type) bool; Bits() int; ChanDir() ChanDir; Elem() Type; Field(i int) StructField; FieldAlign() int; FieldByIndex(index []int) StructField; FieldByName(name string) (StructField, bool); FieldByNameFunc(match func(string) bool) (StructField, bool); Implements(u Type) bool; In(i int) Type; IsVariadic() bool; Key() Type; Kind() Kind; Len() int; Method(int) Method; MethodByName(string) (Method, bool); Name() string; NumField() int; NumIn() int; NumMethod() int; NumOut() int; Out(i int) Type; PkgPath() string; Size() uintptr; String() string; common() *commonType; rawString() string; runtimeType() *runtimeType; uncommon() *uncommonType}"},
+	{pkgpath: "nointerface", name: "I", want: "type I int"},
+	{pkgpath: "issue29198", name: "FooServer", gccgoVersion: 7, want: "type FooServer struct{FooServer *FooServer; user string; ctx context.Context}"},
+	{pkgpath: "issue30628", name: "Apple", want: "type Apple struct{hey sync.RWMutex; x int; RQ [517]struct{Count uintptr; NumBytes uintptr; Last uintptr}}"},
+	{pkgpath: "issue31540", name: "S", gccgoVersion: 7, want: "type S struct{b int; map[Y]Z}"},
+	{pkgpath: "issue34182", name: "T1", want: "type T1 struct{f *T2}"},
 }
 
 func TestGoxImporter(t *testing.T) {
@@ -119,21 +130,50 @@ func TestObjImporter(t *testing.T) {
 		t.Skip("This test needs gccgo")
 	}
 
-	tmpdir, err := ioutil.TempDir("", "")
+	verout, err := exec.Command(gpath, "--version").CombinedOutput()
+	if err != nil {
+		t.Logf("%s", verout)
+		t.Fatal(err)
+	}
+	vers := regexp.MustCompile(`([0-9]+)\.([0-9]+)`).FindSubmatch(verout)
+	if len(vers) == 0 {
+		t.Fatalf("could not find version number in %s", verout)
+	}
+	major, err := strconv.Atoi(string(vers[1]))
 	if err != nil {
 		t.Fatal(err)
 	}
+	minor, err := strconv.Atoi(string(vers[2]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("gccgo version %d.%d", major, minor)
+
+	tmpdir, err := ioutil.TempDir("", "TestObjImporter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+
 	initmap := make(map[*types.Package]InitData)
 	imp := GetImporter([]string{tmpdir}, initmap)
 
-	artmpdir, err := ioutil.TempDir("", "")
+	artmpdir, err := ioutil.TempDir("", "TestObjImporter")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer os.RemoveAll(artmpdir)
+
 	arinitmap := make(map[*types.Package]InitData)
 	arimp := GetImporter([]string{artmpdir}, arinitmap)
 
 	for _, test := range importerTests {
+		if major < test.gccgoVersion {
+			// Support for type aliases was added in GCC 7.
+			t.Logf("skipping %q: not supported before gccgo version %d", test.pkgpath, test.gccgoVersion)
+			continue
+		}
+
 		gofile := filepath.Join("testdata", test.pkgpath+".go")
 		if _, err := os.Stat(gofile); os.IsNotExist(err) {
 			continue
@@ -165,9 +205,5 @@ func TestObjImporter(t *testing.T) {
 		if err = os.Remove(afile); err != nil {
 			t.Fatal(err)
 		}
-	}
-
-	if err = os.Remove(tmpdir); err != nil {
-		t.Fatal(err)
 	}
 }

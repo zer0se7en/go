@@ -89,7 +89,7 @@ TEXT runtime·closefd(SB),NOSPLIT,$0-12
 	MOVL	AX, ret+8(FP)
 	RET
 
-TEXT runtime·write(SB),NOSPLIT,$0-28
+TEXT runtime·write1(SB),NOSPLIT,$0-28
 	MOVQ	fd+0(FP), DI
 	MOVQ	p+8(FP), SI
 	MOVL	n+16(FP), DX
@@ -175,8 +175,8 @@ TEXT runtime·mincore(SB),NOSPLIT,$0-28
 	MOVL	AX, ret+24(FP)
 	RET
 
-// func walltime() (sec int64, nsec int32)
-TEXT runtime·walltime(SB),NOSPLIT,$0-12
+// func walltime1() (sec int64, nsec int32)
+TEXT runtime·walltime1(SB),NOSPLIT,$0-12
 	// We don't know how much stack space the VDSO code will need,
 	// so switch to g0.
 	// In particular, a kernel configured with CONFIG_OPTIMIZE_INLINING=n
@@ -233,7 +233,7 @@ fallback:
 	MOVL	DX, nsec+8(FP)
 	RET
 
-TEXT runtime·nanotime(SB),NOSPLIT,$0-8
+TEXT runtime·nanotime1(SB),NOSPLIT,$0-8
 	// Switch to g0 stack. See comment above in runtime·walltime.
 
 	MOVQ	SP, BP	// Save old SP; BP unchanged by C code.
@@ -605,10 +605,8 @@ TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
 // set tls base to DI
 TEXT runtime·settls(SB),NOSPLIT,$32
 #ifdef GOOS_android
-	// Same as in sys_darwin_386.s:/ugliness, different constant.
-	// DI currently holds m->tls, which must be fs:0x1d0.
-	// See cgo/gcc_android_amd64.c for the derivation of the constant.
-	SUBQ	$0x1d0, DI  // In android, the tls base
+	// Android stores the TLS offset in runtime·tls_g.
+	SUBQ	runtime·tls_g(SB), DI
 #else
 	ADDQ	$8, DI	// ELF wants to use -8(FS)
 #endif

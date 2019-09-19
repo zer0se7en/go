@@ -10,7 +10,6 @@ import (
 	"crypto/hmac"
 	"crypto/rsa"
 	"errors"
-	"fmt"
 	"hash"
 	"sync/atomic"
 	"time"
@@ -463,10 +462,9 @@ func (hs *clientHandshakeStateTLS13) readServerCertificate() error {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid certificate signature algorithm")
 	}
-	h := sigHash.New()
-	writeSignedMessage(h, serverSignatureContext, hs.transcript)
+	signed := signedMessage(sigHash, serverSignatureContext, hs.transcript)
 	if err := verifyHandshakeSignature(sigType, c.peerCertificates[0].PublicKey,
-		sigHash, h.Sum(nil), certVerify.signature); err != nil {
+		sigHash, signed, certVerify.signature); err != nil {
 		c.sendAlert(alertDecryptError)
 		return errors.New("tls: invalid certificate signature")
 	}
@@ -548,7 +546,7 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 		return err
 	}
 
-	// If the client is sending an empty certificate message, skip the CertificateVerify.
+	// If we sent an empty certificate message, skip the CertificateVerify.
 	if len(cert.Certificate) == 0 {
 		return nil
 	}
@@ -556,10 +554,10 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 	certVerifyMsg := new(certificateVerifyMsg)
 	certVerifyMsg.hasSignatureAlgorithm = true
 
-	supportedAlgs := signatureSchemesForCertificate(cert)
+	supportedAlgs := signatureSchemesForCertificate(c.vers, cert)
 	if supportedAlgs == nil {
 		c.sendAlert(alertInternalError)
-		return fmt.Errorf("tls: unsupported certificate key (%T)", cert.PrivateKey)
+		return unsupportedCertificateError(cert)
 	}
 	// Pick signature scheme in server preference order, as the client
 	// preference order is not configurable.
@@ -569,23 +567,25 @@ func (hs *clientHandshakeStateTLS13) sendClientCertificate() error {
 			break
 		}
 	}
+	if certVerifyMsg.signatureAlgorithm == 0 {
+		// getClientCertificate returned a certificate incompatible with the
+		// CertificateRequestInfo supported signature algorithms.
+		c.sendAlert(alertHandshakeFailure)
+		return errors.New("tls: server doesn't support selected certificate")
+	}
 
 	sigType := signatureFromSignatureScheme(certVerifyMsg.signatureAlgorithm)
 	sigHash, err := hashFromSignatureScheme(certVerifyMsg.signatureAlgorithm)
 	if sigType == 0 || err != nil {
-		// getClientCertificate returned a certificate incompatible with the
-		// CertificateRequestInfo supported signature algorithms.
-		c.sendAlert(alertInternalError)
-		return err
+		return c.sendAlert(alertInternalError)
 	}
-	h := sigHash.New()
-	writeSignedMessage(h, clientSignatureContext, hs.transcript)
 
+	signed := signedMessage(sigHash, clientSignatureContext, hs.transcript)
 	signOpts := crypto.SignerOpts(sigHash)
 	if sigType == signatureRSAPSS {
 		signOpts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: sigHash}
 	}
-	sig, err := cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), h.Sum(nil), signOpts)
+	sig, err := cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), signed, signOpts)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return errors.New("tls: failed to sign handshake: " + err.Error())

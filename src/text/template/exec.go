@@ -5,7 +5,6 @@
 package template
 
 import (
-	"bytes"
 	"fmt"
 	"internal/fmtsort"
 	"io"
@@ -121,6 +120,10 @@ func (e ExecError) Error() string {
 	return e.Err.Error()
 }
 
+func (e ExecError) Unwrap() error {
+	return e.Err
+}
+
 // errorf records an ExecError and terminates processing.
 func (s *state) errorf(format string, args ...interface{}) {
 	name := doublePercent(s.tmpl.Name())
@@ -226,21 +229,19 @@ func (t *Template) DefinedTemplates() string {
 	if t.common == nil {
 		return ""
 	}
-	var b bytes.Buffer
+	var b strings.Builder
 	for name, tmpl := range t.tmpl {
 		if tmpl.Tree == nil || tmpl.Root == nil {
 			continue
 		}
-		if b.Len() > 0 {
+		if b.Len() == 0 {
+			b.WriteString("; defined templates are: ")
+		} else {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%q", name)
 	}
-	var s string
-	if b.Len() > 0 {
-		s = "; defined templates are: " + b.String()
-	}
-	return s
+	return b.String()
 }
 
 // Walk functions step through the major pieces of the template structure,
@@ -281,7 +282,7 @@ func (s *state) walk(dot reflect.Value, node parse.Node) {
 func (s *state) walkIfOrWith(typ parse.NodeType, dot reflect.Value, pipe *parse.PipeNode, list, elseList *parse.ListNode) {
 	defer s.pop(s.mark())
 	val := s.evalPipeline(dot, pipe)
-	truth, ok := isTrue(val)
+	truth, ok := isTrue(indirectInterface(val))
 	if !ok {
 		s.errorf("if/with can't use %v", val)
 	}
@@ -495,7 +496,7 @@ func (s *state) idealConstant(constant *parse.NumberNode) reflect.Value {
 	switch {
 	case constant.IsComplex:
 		return reflect.ValueOf(constant.Complex128) // incontrovertible.
-	case constant.IsFloat && !isHexConstant(constant.Text) && strings.ContainsAny(constant.Text, ".eE"):
+	case constant.IsFloat && !isHexInt(constant.Text) && strings.ContainsAny(constant.Text, ".eEpP"):
 		return reflect.ValueOf(constant.Float64)
 	case constant.IsInt:
 		n := int(constant.Int64)
@@ -509,8 +510,8 @@ func (s *state) idealConstant(constant *parse.NumberNode) reflect.Value {
 	return zero
 }
 
-func isHexConstant(s string) bool {
-	return len(s) > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')
+func isHexInt(s string) bool {
+	return len(s) > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') && !strings.ContainsAny(s, "pP")
 }
 
 func (s *state) evalFieldNode(dot reflect.Value, field *parse.FieldNode, args []parse.Node, final reflect.Value) reflect.Value {
@@ -576,6 +577,13 @@ func (s *state) evalField(dot reflect.Value, fieldName string, node parse.Node, 
 	}
 	typ := receiver.Type()
 	receiver, isNil := indirect(receiver)
+	if receiver.Kind() == reflect.Interface && isNil {
+		// Calling a method on a nil interface can't work. The
+		// MethodByName method call below would panic.
+		s.errorf("nil pointer evaluating %s.%s", typ, fieldName)
+		return zero
+	}
+
 	// Unless it's an interface, need to get to a value of type *T to guarantee
 	// we see all methods of T and *T.
 	ptr := receiver
@@ -591,9 +599,6 @@ func (s *state) evalField(dot reflect.Value, fieldName string, node parse.Node, 
 	case reflect.Struct:
 		tField, ok := receiver.Type().FieldByName(fieldName)
 		if ok {
-			if isNil {
-				s.errorf("nil pointer evaluating %s.%s", typ, fieldName)
-			}
 			field := receiver.FieldByIndex(tField.Index)
 			if tField.PkgPath != "" { // field is unexported
 				s.errorf("%s is an unexported field of struct type %s", fieldName, typ)
@@ -605,9 +610,6 @@ func (s *state) evalField(dot reflect.Value, fieldName string, node parse.Node, 
 			return field
 		}
 	case reflect.Map:
-		if isNil {
-			s.errorf("nil pointer evaluating %s.%s", typ, fieldName)
-		}
 		// If it's a map, attempt to use the field name as a key.
 		nameVal := reflect.ValueOf(fieldName)
 		if nameVal.Type().AssignableTo(receiver.Type().Key()) {
@@ -626,6 +628,18 @@ func (s *state) evalField(dot reflect.Value, fieldName string, node parse.Node, 
 				}
 			}
 			return result
+		}
+	case reflect.Ptr:
+		etyp := receiver.Type().Elem()
+		if etyp.Kind() == reflect.Struct {
+			if _, ok := etyp.FieldByName(fieldName); !ok {
+				// If there's no such field, say "can't evaluate"
+				// instead of "nil pointer evaluating".
+				break
+			}
+		}
+		if isNil {
+			s.errorf("nil pointer evaluating %s.%s", typ, fieldName)
 		}
 	}
 	s.errorf("can't evaluate field %s in type %s", fieldName, typ)
@@ -899,7 +913,9 @@ func (s *state) evalEmptyInterface(dot reflect.Value, n parse.Node) reflect.Valu
 	panic("not reached")
 }
 
-// indirect returns the item at the end of indirection, and a bool to indicate if it's nil.
+// indirect returns the item at the end of indirection, and a bool to indicate
+// if it's nil. If the returned bool is true, the returned value's kind will be
+// either a pointer or interface.
 func indirect(v reflect.Value) (rv reflect.Value, isNil bool) {
 	for ; v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface; v = v.Elem() {
 		if v.IsNil() {

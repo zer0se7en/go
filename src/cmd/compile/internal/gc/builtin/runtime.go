@@ -15,9 +15,8 @@ package runtime
 import "unsafe"
 
 func newobject(typ *byte) *any
-func panicindex()
-func panicslice()
 func panicdivide()
+func panicshift()
 func panicmakeslicelen()
 func throwinit()
 func panicwrap()
@@ -25,6 +24,25 @@ func panicwrap()
 func gopanic(interface{})
 func gorecover(*int32) interface{}
 func goschedguarded()
+
+// Note: these declarations are just for wasm port.
+// Other ports call assembly stubs instead.
+func goPanicIndex(x int, y int)
+func goPanicIndexU(x uint, y int)
+func goPanicSliceAlen(x int, y int)
+func goPanicSliceAlenU(x uint, y int)
+func goPanicSliceAcap(x int, y int)
+func goPanicSliceAcapU(x uint, y int)
+func goPanicSliceB(x int, y int)
+func goPanicSliceBU(x uint, y int)
+func goPanicSlice3Alen(x int, y int)
+func goPanicSlice3AlenU(x uint, y int)
+func goPanicSlice3Acap(x int, y int)
+func goPanicSlice3AcapU(x uint, y int)
+func goPanicSlice3B(x int, y int)
+func goPanicSlice3BU(x uint, y int)
+func goPanicSlice3C(x int, y int)
+func goPanicSlice3CU(x uint, y int)
 
 func printbool(bool)
 func printfloat(float64)
@@ -161,11 +179,34 @@ func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr)
 func memclrHasPointers(ptr unsafe.Pointer, n uintptr)
 
 func memequal(x, y *any, size uintptr) bool
+func memequal0(x, y *any) bool
 func memequal8(x, y *any) bool
 func memequal16(x, y *any) bool
 func memequal32(x, y *any) bool
 func memequal64(x, y *any) bool
 func memequal128(x, y *any) bool
+func f32equal(p, q unsafe.Pointer) bool
+func f64equal(p, q unsafe.Pointer) bool
+func c64equal(p, q unsafe.Pointer) bool
+func c128equal(p, q unsafe.Pointer) bool
+func strequal(p, q unsafe.Pointer) bool
+func interequal(p, q unsafe.Pointer) bool
+func nilinterequal(p, q unsafe.Pointer) bool
+
+func memhash(p unsafe.Pointer, h uintptr, size uintptr) uintptr
+func memhash0(p unsafe.Pointer, h uintptr) uintptr
+func memhash8(p unsafe.Pointer, h uintptr) uintptr
+func memhash16(p unsafe.Pointer, h uintptr) uintptr
+func memhash32(p unsafe.Pointer, h uintptr) uintptr
+func memhash64(p unsafe.Pointer, h uintptr) uintptr
+func memhash128(p unsafe.Pointer, h uintptr) uintptr
+func f32hash(p unsafe.Pointer, h uintptr) uintptr
+func f64hash(p unsafe.Pointer, h uintptr) uintptr
+func c64hash(p unsafe.Pointer, h uintptr) uintptr
+func c128hash(p unsafe.Pointer, h uintptr) uintptr
+func strhash(a unsafe.Pointer, h uintptr) uintptr
+func interhash(p unsafe.Pointer, h uintptr) uintptr
+func nilinterhash(p unsafe.Pointer, h uintptr) uintptr
 
 // only used on 32-bit
 func int64div(int64, int64) int64

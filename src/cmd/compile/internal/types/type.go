@@ -57,16 +57,13 @@ const (
 	TUNSAFEPTR
 
 	// pseudo-types for literals
-	TIDEAL
+	TIDEAL // untyped numeric constants
 	TNIL
 	TBLANK
 
 	// pseudo-types for frame layout
 	TFUNCARGS
 	TCHANARGS
-
-	// pseudo-types for import/export
-	TDDDFIELD // wrapper: contained type is a ... field
 
 	// SSA backend types
 	TSSA   // internal types used by SSA backend (flags, memory, etc.)
@@ -94,7 +91,6 @@ const (
 // It also stores pointers to several special types:
 //   - Types[TANY] is the placeholder "any" type recognized by substArgTypes.
 //   - Types[TBLANK] represents the blank variable's type.
-//   - Types[TIDEAL] represents untyped numeric constants.
 //   - Types[TNIL] represents the predeclared "nil" value's type.
 //   - Types[TUNSAFEPTR] is package unsafe's Pointer type.
 var Types [NTYPE]*Type
@@ -112,8 +108,6 @@ var (
 	Idealbool   *Type
 
 	// Types to represent untyped numeric constants.
-	// Note: Currently these are only used within the binary export
-	// data format. The rest of the compiler only uses Types[TIDEAL].
 	Idealint     = New(TIDEAL)
 	Idealrune    = New(TIDEAL)
 	Idealfloat   = New(TIDEAL)
@@ -131,7 +125,6 @@ type Type struct {
 	// TFUNC: *Func
 	// TSTRUCT: *Struct
 	// TINTER: *Interface
-	// TDDDFIELD: DDDField
 	// TFUNCARGS: FuncArgs
 	// TCHANARGS: ChanArgs
 	// TCHAN: *Chan
@@ -236,7 +229,7 @@ func (t *Type) MapType() *Map {
 
 // Forward contains Type fields specific to forward types.
 type Forward struct {
-	Copyto      []*Node  // where to copy the eventual value to
+	Copyto      []*Type  // where to copy the eventual value to
 	Embedlineno src.XPos // first use of this type as an embedded type
 }
 
@@ -306,11 +299,6 @@ type Interface struct {
 // Ptr contains Type fields specific to pointer types.
 type Ptr struct {
 	Elem *Type // element type
-}
-
-// DDDField contains Type fields specific to TDDDFIELD types.
-type DDDField struct {
-	T *Type // reference to a slice type for ... args
 }
 
 // ChanArgs contains Type fields specific to TCHANARGS types.
@@ -392,6 +380,11 @@ func (f *Field) End() int64 {
 	return f.Offset + f.Type.Width
 }
 
+// IsMethod reports whether f represents a method rather than a struct field.
+func (f *Field) IsMethod() bool {
+	return f.Type.Etype == TFUNC && f.Type.Recv() != nil
+}
+
 // Fields is a pointer to a slice of *Field.
 // This saves space in Types that do not have fields or methods
 // compared to a simple slice of *Field.
@@ -468,8 +461,6 @@ func New(et EType) *Type {
 		t.Extra = ChanArgs{}
 	case TFUNCARGS:
 		t.Extra = FuncArgs{}
-	case TDDDFIELD:
-		t.Extra = DDDField{}
 	case TCHAN:
 		t.Extra = new(Chan)
 	case TTUPLE:
@@ -568,13 +559,6 @@ func NewPtr(elem *Type) *Type {
 	if NewPtrCacheEnabled {
 		elem.Cache.ptr = t
 	}
-	return t
-}
-
-// NewDDDField returns a new TDDDFIELD type for slice type s.
-func NewDDDField(s *Type) *Type {
-	t := New(TDDDFIELD)
-	t.Extra = DDDField{T: s}
 	return t
 }
 
@@ -797,12 +781,6 @@ func (t *Type) Elem() *Type {
 	return nil
 }
 
-// DDDField returns the slice ... type for TDDDFIELD type t.
-func (t *Type) DDDField() *Type {
-	t.wantEtype(TDDDFIELD)
-	return t.Extra.(DDDField).T
-}
-
 // ChanArgs returns the channel type for TCHANARGS type t.
 func (t *Type) ChanArgs() *Type {
 	t.wantEtype(TCHANARGS)
@@ -1008,7 +986,7 @@ func (r *Sym) cmpsym(s *Sym) Cmp {
 // TODO(josharian): make this safe for recursive interface types
 // and use in signatlist sorting. See issue 19869.
 func (t *Type) cmp(x *Type) Cmp {
-	// This follows the structure of eqtype in subr.go
+	// This follows the structure of function identical in identity.go
 	// with two exceptions.
 	// 1. Symbols are compared more carefully because a <,=,> result is desired.
 	// 2. Maps are treated specially to avoid endless recursion -- maps
@@ -1276,6 +1254,15 @@ func (t *Type) IsPtrShaped() bool {
 		t.Etype == TMAP || t.Etype == TCHAN || t.Etype == TFUNC
 }
 
+// HasNil reports whether the set of values determined by t includes nil.
+func (t *Type) HasNil() bool {
+	switch t.Etype {
+	case TCHAN, TFUNC, TINTER, TMAP, TPTR, TSLICE, TUNSAFEPTR:
+		return true
+	}
+	return false
+}
+
 func (t *Type) IsString() bool {
 	return t.Etype == TSTRING
 }
@@ -1390,6 +1377,28 @@ func (t *Type) NumComponents(countBlank componentsIncludeBlankFields) int64 {
 	return 1
 }
 
+// SoleComponent returns the only primitive component in t,
+// if there is exactly one. Otherwise, it returns nil.
+// Components are counted as in NumComponents, including blank fields.
+func (t *Type) SoleComponent() *Type {
+	switch t.Etype {
+	case TSTRUCT:
+		if t.IsFuncArgStruct() {
+			Fatalf("SoleComponent func arg struct")
+		}
+		if t.NumFields() != 1 {
+			return nil
+		}
+		return t.Field(0).Type.SoleComponent()
+	case TARRAY:
+		if t.NumElem() != 1 {
+			return nil
+		}
+		return t.Elem().SoleComponent()
+	}
+	return t
+}
+
 // ChanDir returns the direction of a channel type t.
 // The direction will be one of Crecv, Csend, or Cboth.
 func (t *Type) ChanDir() ChanDir {
@@ -1457,7 +1466,7 @@ func Haspointers1(t *Type, ignoreNotInHeap bool) bool {
 	return true
 }
 
-// HasHeapPointer returns whether t contains a heap pointer.
+// HasHeapPointer reports whether t contains a heap pointer.
 // This is used for write barrier insertion, so it ignores
 // pointers to go:notinheap types.
 func (t *Type) HasHeapPointer() bool {

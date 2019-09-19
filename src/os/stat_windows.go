@@ -10,24 +10,6 @@ import (
 	"unsafe"
 )
 
-// isNulName reports whether name is NUL file name.
-// For example, it returns true for both "NUL" and "nul".
-func isNulName(name string) bool {
-	if len(name) != 3 {
-		return false
-	}
-	if name[0] != 'n' && name[0] != 'N' {
-		return false
-	}
-	if name[1] != 'u' && name[1] != 'U' {
-		return false
-	}
-	if name[2] != 'l' && name[2] != 'L' {
-		return false
-	}
-	return true
-}
-
 // Stat returns the FileInfo structure describing file.
 // If there is an error, it will be of type *PathError.
 func (file *File) Stat() (FileInfo, error) {
@@ -39,7 +21,7 @@ func (file *File) Stat() (FileInfo, error) {
 		// I don't know any better way to do that for directory
 		return Stat(file.dirinfo.path)
 	}
-	if isNulName(file.name) {
+	if isWindowsNulName(file.name) {
 		return &devNullStat, nil
 	}
 
@@ -65,7 +47,7 @@ func stat(funcname, name string, createFileAttrs uint32) (FileInfo, error) {
 	if len(name) == 0 {
 		return nil, &PathError{funcname, name, syscall.Errno(syscall.ERROR_PATH_NOT_FOUND)}
 	}
-	if isNulName(name) {
+	if isWindowsNulName(name) {
 		return &devNullStat, nil
 	}
 	namep, err := syscall.UTF16PtrFromString(fixLongPath(name))
@@ -80,7 +62,6 @@ func stat(funcname, name string, createFileAttrs uint32) (FileInfo, error) {
 	if err == nil && fa.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 		// Not a symlink.
 		fs := &fileStat{
-			path:           name,
 			FileAttributes: fa.FileAttributes,
 			CreationTime:   fa.CreationTime,
 			LastAccessTime: fa.LastAccessTime,
@@ -88,14 +69,9 @@ func stat(funcname, name string, createFileAttrs uint32) (FileInfo, error) {
 			FileSizeHigh:   fa.FileSizeHigh,
 			FileSizeLow:    fa.FileSizeLow,
 		}
-		// Gather full path to be used by os.SameFile later.
-		if !isAbs(fs.path) {
-			fs.path, err = syscall.FullPath(fs.path)
-			if err != nil {
-				return nil, &PathError{"FullPath", name, err}
-			}
+		if err := fs.saveInfoFromPath(name); err != nil {
+			return nil, err
 		}
-		fs.name = basename(name)
 		return fs, nil
 	}
 	// GetFileAttributesEx fails with ERROR_SHARING_VIOLATION error for
@@ -107,7 +83,11 @@ func stat(funcname, name string, createFileAttrs uint32) (FileInfo, error) {
 			return nil, &PathError{"FindFirstFile", name, err}
 		}
 		syscall.FindClose(sh)
-		return newFileStatFromWin32finddata(&fd), nil
+		fs := newFileStatFromWin32finddata(&fd)
+		if err := fs.saveInfoFromPath(name); err != nil {
+			return nil, err
+		}
+		return fs, nil
 	}
 
 	// Finally use CreateFile.

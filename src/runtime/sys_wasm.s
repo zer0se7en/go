@@ -117,7 +117,7 @@ TEXT runtime·wasmTruncS(SB), NOSPLIT, $0-0
 	End
 
 	Get R0
-	I64TruncSF64
+	I64TruncF64S
 	Return
 
 TEXT runtime·wasmTruncU(SB), NOSPLIT, $0-0
@@ -146,7 +146,7 @@ TEXT runtime·wasmTruncU(SB), NOSPLIT, $0-0
 	End
 
 	Get R0
-	I64TruncUF64
+	I64TruncF64U
 	Return
 
 TEXT runtime·exitThread(SB), NOSPLIT, $0-0
@@ -171,6 +171,10 @@ TEXT runtime·growMemory(SB), NOSPLIT, $0
 	I32Store ret+8(FP)
 	RET
 
+TEXT ·resetMemoryDataView(SB), NOSPLIT, $0
+	CallImport
+	RET
+
 TEXT ·wasmExit(SB), NOSPLIT, $0
 	CallImport
 	RET
@@ -179,19 +183,19 @@ TEXT ·wasmWrite(SB), NOSPLIT, $0
 	CallImport
 	RET
 
-TEXT ·nanotime(SB), NOSPLIT, $0
+TEXT ·nanotime1(SB), NOSPLIT, $0
 	CallImport
 	RET
 
-TEXT ·walltime(SB), NOSPLIT, $0
+TEXT ·walltime1(SB), NOSPLIT, $0
 	CallImport
 	RET
 
-TEXT ·scheduleCallback(SB), NOSPLIT, $0
+TEXT ·scheduleTimeoutEvent(SB), NOSPLIT, $0
 	CallImport
 	RET
 
-TEXT ·clearScheduledCallback(SB), NOSPLIT, $0
+TEXT ·clearTimeoutEvent(SB), NOSPLIT, $0
 	CallImport
 	RET
 

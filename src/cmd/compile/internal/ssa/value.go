@@ -183,7 +183,7 @@ func (v *Value) auxString() string {
 		if v.Aux != nil {
 			return fmt.Sprintf(" {%v}", v.Aux)
 		}
-	case auxSymOff, auxSymInt32, auxTypSize:
+	case auxSymOff, auxTypSize:
 		s := ""
 		if v.Aux != nil {
 			s = fmt.Sprintf(" {%v}", v.Aux)
@@ -300,7 +300,7 @@ func (v *Value) Fatalf(msg string, args ...interface{}) {
 	v.Block.Func.fe.Fatalf(v.Pos, msg, args...)
 }
 
-// isGenericIntConst returns whether v is a generic integer constant.
+// isGenericIntConst reports whether v is a generic integer constant.
 func (v *Value) isGenericIntConst() bool {
 	return v != nil && (v.Op == OpConst64 || v.Op == OpConst32 || v.Op == OpConst16 || v.Op == OpConst8)
 }

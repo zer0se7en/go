@@ -80,7 +80,7 @@ TEXT runtime·closefd(SB),NOSPLIT|NOFRAME,$0-12
 	MOVW	R3, ret+8(FP)
 	RET
 
-TEXT runtime·write(SB),NOSPLIT|NOFRAME,$0-28
+TEXT runtime·write1(SB),NOSPLIT|NOFRAME,$0-28
 	MOVD	fd+0(FP), R3
 	MOVD	p+8(FP), R4
 	MOVW	n+16(FP), R5
@@ -155,8 +155,8 @@ TEXT runtime·mincore(SB),NOSPLIT|NOFRAME,$0-28
 	MOVW	R3, ret+24(FP)
 	RET
 
-// func walltime() (sec int64, nsec int32)
-TEXT runtime·walltime(SB),NOSPLIT,$16
+// func walltime1() (sec int64, nsec int32)
+TEXT runtime·walltime1(SB),NOSPLIT,$16
 	MOVD	R1, R15		// R15 is unchanged by C code
 	MOVD	g_m(g), R21	// R21 = m
 
@@ -203,7 +203,7 @@ fallback:
 	MOVD	40(R1), R5
 	JMP	finish
 
-TEXT runtime·nanotime(SB),NOSPLIT,$16
+TEXT runtime·nanotime1(SB),NOSPLIT,$16
 	MOVD	$1, R3		// CLOCK_MONOTONIC
 
 	MOVD	R1, R15		// R15 is unchanged by C code
@@ -285,16 +285,19 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
 	MOVD	24(R1), R2
 	RET
 
+TEXT runtime·sigreturn(SB),NOSPLIT,$0-0
+	RET
+
 #ifdef GOARCH_ppc64le
 // ppc64le doesn't need function descriptors
 TEXT runtime·sigtramp(SB),NOSPLIT,$64
 #else
 // function descriptor for the real sigtramp
 TEXT runtime·sigtramp(SB),NOSPLIT|NOFRAME,$0
-	DWORD	$runtime·_sigtramp(SB)
+	DWORD	$sigtramp<>(SB)
 	DWORD	$0
 	DWORD	$0
-TEXT runtime·_sigtramp(SB),NOSPLIT,$64
+TEXT sigtramp<>(SB),NOSPLIT,$64
 #endif
 	// initialize essential registers (just in case)
 	BL	runtime·reginit(SB)
@@ -410,11 +413,11 @@ sigtrampnog:
 #else
 // function descriptor for the real sigtramp
 TEXT runtime·cgoSigtramp(SB),NOSPLIT|NOFRAME,$0
-	DWORD	$runtime·_cgoSigtramp(SB)
+	DWORD	$cgoSigtramp<>(SB)
 	DWORD	$0
 	DWORD	$0
-TEXT runtime·_cgoSigtramp(SB),NOSPLIT,$0
-	JMP	runtime·_sigtramp(SB)
+TEXT cgoSigtramp<>(SB),NOSPLIT,$0
+	JMP	sigtramp<>(SB)
 #endif
 
 TEXT runtime·sigprofNonGoWrapper<>(SB),NOSPLIT,$0
@@ -615,4 +618,19 @@ TEXT runtime·sbrk0(SB),NOSPLIT|NOFRAME,$0
 	MOVD	$0, R3
 	SYSCALL	$SYS_brk
 	MOVD	R3, ret+0(FP)
+	RET
+
+TEXT runtime·access(SB),$0-20
+	MOVD	R0, 0(R0) // unimplemented, only needed for android; declared in stubs_linux.go
+	MOVW	R0, ret+16(FP) // for vet
+	RET
+
+TEXT runtime·connect(SB),$0-28
+	MOVD	R0, 0(R0) // unimplemented, only needed for android; declared in stubs_linux.go
+	MOVW	R0, ret+24(FP) // for vet
+	RET
+
+TEXT runtime·socket(SB),$0-20
+	MOVD	R0, 0(R0) // unimplemented, only needed for android; declared in stubs_linux.go
+	MOVW	R0, ret+16(FP) // for vet
 	RET

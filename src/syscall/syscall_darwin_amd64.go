@@ -14,7 +14,15 @@ func setTimeval(sec, usec int64) Timeval {
 	return Timeval{Sec: sec, Usec: int32(usec)}
 }
 
+//sys	Fstat(fd int, stat *Stat_t) (err error) = SYS_fstat64
+//sys	Fstatfs(fd int, stat *Statfs_t) (err error) = SYS_fstatfs64
 //sysnb	Gettimeofday(tp *Timeval) (err error)
+//sys	Lstat(path string, stat *Stat_t) (err error) = SYS_lstat64
+//sys	Stat(path string, stat *Stat_t) (err error) = SYS_stat64
+//sys	Statfs(path string, stat *Statfs_t) (err error) = SYS_statfs64
+//sys   fstatat(fd int, path string, stat *Stat_t, flags int) (err error) = SYS_fstatat64
+//sys   ptrace(request int, pid int, addr uintptr, data uintptr) (err error)
+//sys   sysctl(mib []_C_int, old *byte, oldlen *uintptr, new *byte, newlen uintptr) (err error)
 
 func SetKevent(k *Kevent_t, fd, mode, flags int) {
 	k.Ident = uint64(fd)

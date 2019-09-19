@@ -268,10 +268,25 @@ func setThreadCPUProfiler(hz int32) {
 }
 
 func sigpipe() {
-	if sigsend(_SIGPIPE) {
+	if signal_ignored(_SIGPIPE) || sigsend(_SIGPIPE) {
 		return
 	}
 	dieFromSignal(_SIGPIPE)
+}
+
+// sigFetchG fetches the value of G safely when running in a signal handler.
+// On some architectures, the g value may be clobbered when running in a VDSO.
+// See issue #32912.
+//
+//go:nosplit
+func sigFetchG(c *sigctxt) *g {
+    switch GOARCH {
+    case "arm", "arm64", "ppc64", "ppc64le":
+        if inVDSOPage(c.sigpc()) {
+            return nil
+        }
+    }
+    return getg()
 }
 
 // sigtrampgo is called from the signal handler function, sigtramp,
@@ -289,13 +304,14 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 	if sigfwdgo(sig, info, ctx) {
 		return
 	}
-	g := getg()
+	c := &sigctxt{info, ctx}
+	g := sigFetchG(c)
 	if g == nil {
-		c := &sigctxt{info, ctx}
 		if sig == _SIGPROF {
 			sigprofNonGoPC(c.sigpc())
 			return
 		}
+		c.fixsigcode(sig)
 		badsignal(uintptr(sig), c)
 		return
 	}
@@ -346,7 +362,6 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 		signalDuringFork(sig)
 	}
 
-	c := &sigctxt{info, ctx}
 	c.fixsigcode(sig)
 	sighandler(sig, info, ctx, g)
 	setg(g)
@@ -368,6 +383,9 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 //
 // The signal handler must not inject a call to sigpanic if
 // getg().throwsplit, since sigpanic may need to grow the stack.
+//
+// This is exported via linkname to assembly in runtime/cgo.
+//go:linkname sigpanic
 func sigpanic() {
 	g := getg()
 	if !canpanic(g) {
@@ -503,16 +521,14 @@ func raisebadsignal(sig uint32, c *sigctxt) {
 
 //go:nosplit
 func crash() {
-	if GOOS == "darwin" {
-		// OS X core dumps are linear dumps of the mapped memory,
-		// from the first virtual byte to the last, with zeros in the gaps.
-		// Because of the way we arrange the address space on 64-bit systems,
-		// this means the OS X core file will be >128 GB and even on a zippy
-		// workstation can take OS X well over an hour to write (uninterruptible).
-		// Save users from making that mistake.
-		if GOARCH == "amd64" {
-			return
-		}
+	// OS X core dumps are linear dumps of the mapped memory,
+	// from the first virtual byte to the last, with zeros in the gaps.
+	// Because of the way we arrange the address space on 64-bit systems,
+	// this means the OS X core file will be >128 GB and even on a zippy
+	// workstation can take OS X well over an hour to write (uninterruptible).
+	// Save users from making that mistake.
+	if GOOS == "darwin" && GOARCH == "amd64" {
+		return
 	}
 
 	dieFromSignal(_SIGABRT)
@@ -634,6 +650,13 @@ func sigfwdgo(sig uint32, info *siginfo, ctx unsafe.Pointer) bool {
 		return true
 	}
 
+	// This function and its caller sigtrampgo assumes SIGPIPE is delivered on the
+	// originating thread. This property does not hold on macOS (golang.org/issue/33384),
+	// so we have no choice but to ignore SIGPIPE.
+	if GOOS == "darwin" && sig == _SIGPIPE {
+		return true
+	}
+
 	// If there is no handler to forward to, no need to forward.
 	if fwdFn == _SIG_DFL {
 		return false
@@ -648,9 +671,10 @@ func sigfwdgo(sig uint32, info *siginfo, ctx unsafe.Pointer) bool {
 		return false
 	}
 	// Determine if the signal occurred inside Go code. We test that:
-	//   (1) we were in a goroutine (i.e., m.curg != nil), and
-	//   (2) we weren't in CGO.
-	g := getg()
+	//   (1) we weren't in VDSO page,
+	//   (2) we were in a goroutine (i.e., m.curg != nil), and
+	//   (3) we weren't in CGO.
+	g := sigFetchG(c)
 	if g != nil && g.m != nil && g.m.curg != nil && !g.m.incgo {
 		return false
 	}
@@ -773,7 +797,7 @@ func unminitSignals() {
 	}
 }
 
-// blockableSig returns whether sig may be blocked by the signal mask.
+// blockableSig reports whether sig may be blocked by the signal mask.
 // We never want to block the signals marked _SigUnblock;
 // these are the synchronous signals that turn into a Go panic.
 // In a Go program--not a c-archive/c-shared--we never want to block
@@ -844,7 +868,11 @@ func signalstack(s *stack) {
 }
 
 // setsigsegv is used on darwin/arm{,64} to fake a segmentation fault.
+//
+// This is exported via linkname to assembly in runtime/cgo.
+//
 //go:nosplit
+//go:linkname setsigsegv
 func setsigsegv(pc uintptr) {
 	g := getg()
 	g.sig = _SIGSEGV

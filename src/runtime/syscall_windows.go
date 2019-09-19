@@ -74,16 +74,18 @@ func compileCallback(fn eface, cleanstack bool) (code uintptr) {
 		argsize += uintptrSize
 	}
 
-	lock(&cbs.lock)
-	defer unlock(&cbs.lock)
+	lock(&cbs.lock) // We don't unlock this in a defer because this is used from the system stack.
 
 	n := cbs.n
 	for i := 0; i < n; i++ {
 		if cbs.ctxt[i].gobody == fn.data && cbs.ctxt[i].isCleanstack() == cleanstack {
-			return callbackasmAddr(i)
+			r := callbackasmAddr(i)
+			unlock(&cbs.lock)
+			return r
 		}
 	}
 	if n >= cb_max {
+		unlock(&cbs.lock)
 		throw("too many callback functions")
 	}
 
@@ -99,16 +101,21 @@ func compileCallback(fn eface, cleanstack bool) (code uintptr) {
 	cbs.ctxt[n] = c
 	cbs.n++
 
-	return callbackasmAddr(n)
+	r := callbackasmAddr(n)
+	unlock(&cbs.lock)
+	return r
 }
 
 const _LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800
 
+// When available, this function will use LoadLibraryEx with the filename
+// parameter and the important SEARCH_SYSTEM32 argument. But on systems that
+// do not have that option, absoluteFilepath should contain a fallback
+// to the full path inside of system32 for use with vanilla LoadLibrary.
 //go:linkname syscall_loadsystemlibrary syscall.loadsystemlibrary
 //go:nosplit
-func syscall_loadsystemlibrary(filename *uint16) (handle, err uintptr) {
+func syscall_loadsystemlibrary(filename *uint16, absoluteFilepath *uint16) (handle, err uintptr) {
 	lockOSThread()
-	defer unlockOSThread()
 	c := &getg().m.syscall
 
 	if useLoadLibraryEx {
@@ -121,15 +128,9 @@ func syscall_loadsystemlibrary(filename *uint16) (handle, err uintptr) {
 		}{filename, 0, _LOAD_LIBRARY_SEARCH_SYSTEM32}
 		c.args = uintptr(noescape(unsafe.Pointer(&args)))
 	} else {
-		// User doesn't have KB2533623 installed. The caller
-		// wanted to only load the filename DLL from the
-		// System32 directory but that facility doesn't exist,
-		// so just load it the normal way. This is a potential
-		// security risk, but so is not installing security
-		// updates.
 		c.fn = getLoadLibrary()
 		c.n = 1
-		c.args = uintptr(noescape(unsafe.Pointer(&filename)))
+		c.args = uintptr(noescape(unsafe.Pointer(&absoluteFilepath)))
 	}
 
 	cgocall(asmstdcallAddr, unsafe.Pointer(c))
@@ -137,6 +138,7 @@ func syscall_loadsystemlibrary(filename *uint16) (handle, err uintptr) {
 	if handle == 0 {
 		err = c.err
 	}
+	unlockOSThread() // not defer'd after the lockOSThread above to save stack frame size.
 	return
 }
 

@@ -24,6 +24,7 @@ const (
 //sys	Listen(s int, n int) (err error)
 //sys	Pread(fd int, p []byte, offset int64) (n int, err error) = SYS_PREAD64
 //sys	Pwrite(fd int, p []byte, offset int64) (n int, err error) = SYS_PWRITE64
+//sys	Renameat(olddirfd int, oldpath string, newdirfd int, newpath string) (err error)
 //sys	Seek(fd int, offset int64, whence int) (off int64, err error) = SYS_LSEEK
 //sys	sendfile(outfd int, infd int, offset *int64, count int) (written int, err error)
 //sys	Setfsgid(gid int) (err error)
@@ -154,6 +155,4 @@ const (
 	SYS_EPOLL_WAIT   = 1069
 )
 
-func rawVforkSyscall(trap, a1 uintptr) (r1 uintptr, err Errno) {
-	panic("not implemented")
-}
+func rawVforkSyscall(trap, a1 uintptr) (r1 uintptr, err Errno)

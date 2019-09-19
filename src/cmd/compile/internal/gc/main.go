@@ -19,7 +19,7 @@ import (
 	"cmd/internal/sys"
 	"flag"
 	"fmt"
-	"go/build"
+	"internal/goversion"
 	"io"
 	"io/ioutil"
 	"log"
@@ -27,6 +27,7 @@ import (
 	"path"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -39,7 +40,6 @@ var (
 
 var (
 	Debug_append       int
-	Debug_asm          bool
 	Debug_closure      int
 	Debug_compilelater int
 	debug_dclstack     int
@@ -141,6 +141,12 @@ func Main(archInit func(*Arch)) {
 	Ctxt.DiagFlush = flusherrors
 	Ctxt.Bso = bufio.NewWriter(os.Stdout)
 
+	// UseBASEntries is preferred because it shaves about 2% off build time, but LLDB, dsymutil, and dwarfdump
+	// on Darwin don't support it properly, especially since macOS 10.14 (Mojave).  This is exposed as a flag
+	// to allow testing with LLVM tools on Linux, and to help with reporting this bug to the LLVM project.
+	// See bugs 31188 and 21945 (CLs 170638, 98075, 72371).
+	Ctxt.UseBASEntries = Ctxt.Headtype != objabi.Hdarwin
+
 	localpkg = types.NewPkg("", "")
 	localpkg.Prefix = "\"\""
 
@@ -184,6 +190,10 @@ func Main(archInit func(*Arch)) {
 	Nacl = objabi.GOOS == "nacl"
 	Wasm := objabi.GOARCH == "wasm"
 
+	// Whether the limit for stack-allocated objects is much smaller than normal.
+	// This can be helpful for diagnosing certain causes of GC latency. See #27732.
+	smallFrames := false
+
 	flag.BoolVar(&compiling_runtime, "+", false, "compiling runtime")
 	flag.BoolVar(&compiling_std, "std", false, "compiling standard library")
 	objabi.Flagcount("%", "debug non-static initializers", &Debug['%'])
@@ -195,7 +205,7 @@ func Main(archInit func(*Arch)) {
 	objabi.Flagcount("K", "debug missing line numbers", &Debug['K'])
 	objabi.Flagcount("L", "show full file names in error messages", &Debug['L'])
 	objabi.Flagcount("N", "disable optimizations", &Debug['N'])
-	flag.BoolVar(&Debug_asm, "S", false, "print assembly listing")
+	objabi.Flagcount("S", "print assembly listing", &Debug['S'])
 	objabi.AddVersionFlag() // -V
 	objabi.Flagcount("W", "debug parse tree after type checking", &Debug['W'])
 	flag.StringVar(&asmhdr, "asmhdr", "", "write assembly header to `file`")
@@ -249,23 +259,29 @@ func Main(archInit func(*Arch)) {
 	flag.StringVar(&goversion, "goversion", "", "required version of the runtime")
 	var symabisPath string
 	flag.StringVar(&symabisPath, "symabis", "", "read symbol ABIs from `file`")
-	flag.BoolVar(&allABIs, "allabis", false, "generate ABI wrappers for all symbols (for bootstrap)")
 	flag.StringVar(&traceprofile, "traceprofile", "", "write an execution trace to `file`")
 	flag.StringVar(&blockprofile, "blockprofile", "", "write block profile to `file`")
 	flag.StringVar(&mutexprofile, "mutexprofile", "", "write mutex profile to `file`")
 	flag.StringVar(&benchfile, "bench", "", "append benchmark times to `file`")
+	flag.BoolVar(&smallFrames, "smallframes", false, "reduce the size limit for stack allocated objects")
+	flag.BoolVar(&Ctxt.UseBASEntries, "dwarfbasentries", Ctxt.UseBASEntries, "use base address selection entries in DWARF")
 	objabi.Flagparse(usage)
 
 	// Record flags that affect the build result. (And don't
 	// record flags that don't, since that would cause spurious
 	// changes in the binary.)
-	recordFlags("B", "N", "l", "msan", "race", "shared", "dynlink", "dwarflocationlists")
+	recordFlags("B", "N", "l", "msan", "race", "shared", "dynlink", "dwarflocationlists", "dwarfbasentries", "smallframes")
+
+	if smallFrames {
+		maxStackVarSize = 128 * 1024
+		maxImplicitStackVarSize = 16 * 1024
+	}
 
 	Ctxt.Flag_shared = flag_dynlink || flag_shared
 	Ctxt.Flag_dynlink = flag_dynlink
 	Ctxt.Flag_optimize = Debug['N'] == 0
 
-	Ctxt.Debugasm = Debug_asm
+	Ctxt.Debugasm = Debug['S']
 	Ctxt.Debugvlog = Debug_vlog
 	if flagDWARF {
 		Ctxt.DebugInfo = debuginfo
@@ -498,6 +514,8 @@ func Main(archInit func(*Arch)) {
 
 	finishUniverse()
 
+	recordPackageName()
+
 	typecheckok = true
 
 	// Process top-level declarations in phases.
@@ -509,7 +527,6 @@ func Main(archInit func(*Arch)) {
 	//   We also defer type alias declarations until phase 2
 	//   to avoid cycles like #18640.
 	//   TODO(gri) Remove this again once we have a fix for #25838.
-	defercheckwidth()
 
 	// Don't use range--typecheck can add closures to xtop.
 	timings.Start("fe", "typecheck", "top1")
@@ -531,7 +548,6 @@ func Main(archInit func(*Arch)) {
 			xtop[i] = typecheck(n, ctxStmt)
 		}
 	}
-	resumecheckwidth()
 
 	// Phase 3: Type check function bodies.
 	// Don't use range--typecheck can add closures to xtop.
@@ -554,7 +570,7 @@ func Main(archInit func(*Arch)) {
 			fcount++
 		}
 	}
-	// With all types ckecked, it's now safe to verify map keys. One single
+	// With all types checked, it's now safe to verify map keys. One single
 	// check past phase 9 isn't sufficient, as we may exit with other errors
 	// before then, thus skipping map key errors.
 	checkMapKeys()
@@ -563,11 +579,6 @@ func Main(archInit func(*Arch)) {
 	if nsavederrors+nerrors != 0 {
 		errorexit()
 	}
-
-	// The "init" function is the only user-spellable symbol that
-	// we construct later. Mark it as a function now before
-	// anything can ask for its Linksym.
-	lookup("init").SetFunc(true)
 
 	// Phase 4: Decide how to capture closed variables.
 	// This needs to run before escape analysis,
@@ -719,7 +730,7 @@ func Main(archInit func(*Arch)) {
 	}
 
 	// Check whether any of the functions we have compiled have gigantic stack frames.
-	obj.SortSlice(largeStackFrames, func(i, j int) bool {
+	sort.Slice(largeStackFrames, func(i, j int) bool {
 		return largeStackFrames[i].pos.Before(largeStackFrames[j].pos)
 	})
 	for _, large := range largeStackFrames {
@@ -833,11 +844,6 @@ func readImportCfg(file string) {
 // symbols required by non-Go code. These are keyed by link symbol
 // name, where the local package prefix is always `"".`
 var symabiDefs, symabiRefs map[string]obj.ABI
-
-// allABIs indicates that all symbol definitions should have ABI
-// wrappers. This is used during toolchain bootstrapping to avoid
-// having to find cross-package references.
-var allABIs bool
 
 // readSymABIs reads a symabis file that specifies definitions and
 // references of text symbols by ABI.
@@ -1027,7 +1033,6 @@ func loadsys() {
 
 	inimport = true
 	typecheckok = true
-	defercheckwidth()
 
 	typs := runtimeTypes()
 	for _, d := range runtimeDecls {
@@ -1044,7 +1049,6 @@ func loadsys() {
 	}
 
 	typecheckok = false
-	resumecheckwidth()
 	inimport = false
 }
 
@@ -1309,7 +1313,7 @@ func clearImports() {
 		}
 	}
 
-	obj.SortSlice(unused, func(i, j int) bool { return unused[i].pos.Before(unused[j].pos) })
+	sort.Slice(unused, func(i, j int) bool { return unused[i].pos.Before(unused[j].pos) })
 	for _, pkg := range unused {
 		pkgnotused(pkg.pos, pkg.path, pkg.name)
 	}
@@ -1330,6 +1334,7 @@ var concurrentFlagOK = [256]bool{
 	'l': true, // disable inlining
 	'w': true, // all printing happens before compilation
 	'W': true, // all printing happens before compilation
+	'S': true, // printing disassembly happens at the end (but see concurrentBackendAllowed below)
 }
 
 func concurrentBackendAllowed() bool {
@@ -1338,9 +1343,9 @@ func concurrentBackendAllowed() bool {
 			return false
 		}
 	}
-	// Debug_asm by itself is ok, because all printing occurs
+	// Debug['S'] by itself is ok, because all printing occurs
 	// while writing the object file, and that is non-concurrent.
-	// Adding Debug_vlog, however, causes Debug_asm to also print
+	// Adding Debug_vlog, however, causes Debug['S'] to also print
 	// while flushing the plist, which happens concurrently.
 	if Debug_vlog || debugstr != "" || debuglive > 0 {
 		return false
@@ -1411,13 +1416,24 @@ func recordFlags(flags ...string) {
 	s.P = cmd.Bytes()[1:]
 }
 
+// recordPackageName records the name of the package being
+// compiled, so that the linker can save it in the compile unit's DIE.
+func recordPackageName() {
+	s := Ctxt.Lookup(dwarf.CUInfoPrefix + "packagename." + myimportpath)
+	s.Type = objabi.SDWARFINFO
+	// Sometimes (for example when building tests) we can link
+	// together two package main archives. So allow dups.
+	s.Set(obj.AttrDuplicateOK, true)
+	Ctxt.Data = append(Ctxt.Data, s)
+	s.P = []byte(localpkg.Name)
+}
+
 // flag_lang is the language version we are compiling for, set by the -lang flag.
 var flag_lang string
 
 // currentLang returns the current language version.
 func currentLang() string {
-	tags := build.Default.ReleaseTags
-	return tags[len(tags)-1]
+	return fmt.Sprintf("go1.%d", goversion.Version)
 }
 
 // goVersionRE is a regular expression that matches the valid

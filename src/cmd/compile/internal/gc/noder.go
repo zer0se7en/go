@@ -244,10 +244,21 @@ func (p *noder) node() {
 	xtop = append(xtop, p.decls(p.file.DeclList)...)
 
 	for _, n := range p.linknames {
-		if imported_unsafe {
-			lookup(n.local).Linkname = n.remote
-		} else {
+		if !imported_unsafe {
 			p.yyerrorpos(n.pos, "//go:linkname only allowed in Go files that import \"unsafe\"")
+			continue
+		}
+		s := lookup(n.local)
+		if n.remote != "" {
+			s.Linkname = n.remote
+		} else {
+			// Use the default object symbol name if the
+			// user didn't provide one.
+			if myimportpath == "" {
+				p.yyerrorpos(n.pos, "//go:linkname requires linkname argument or -p compiler flag")
+			} else {
+				s.Linkname = objabi.PathToPrefix(myimportpath) + "." + n.local
+			}
 		}
 	}
 
@@ -298,6 +309,10 @@ func (p *noder) decls(decls []syntax.Decl) (l []*Node) {
 }
 
 func (p *noder) importDecl(imp *syntax.ImportDecl) {
+	if imp.Path.Bad {
+		return // avoid follow-on errors if there was a syntax error
+	}
+
 	val := p.basicLit(imp.Path)
 	ipkg := importfile(&val)
 
@@ -546,9 +561,15 @@ func (p *noder) param(param *syntax.Field, dddOk, final bool) *Node {
 	// rewrite ...T parameter
 	if typ.Op == ODDD {
 		if !dddOk {
-			yyerror("cannot use ... in receiver or result parameter list")
+			// We mark these as syntax errors to get automatic elimination
+			// of multiple such errors per line (see yyerrorl in subr.go).
+			yyerror("syntax error: cannot use ... in receiver or result parameter list")
 		} else if !final {
-			yyerror("can only use ... with final parameter in list")
+			if param.Name == nil {
+				yyerror("syntax error: cannot use ... with non-final parameter")
+			} else {
+				p.yyerrorpos(param.Name.Pos(), "syntax error: cannot use ... with non-final parameter %s", param.Name.Value)
+			}
 		}
 		typ.Op = OTARRAY
 		typ.Right = typ.Left
@@ -585,7 +606,9 @@ func (p *noder) expr(expr syntax.Expr) *Node {
 	case *syntax.Name:
 		return p.mkname(expr)
 	case *syntax.BasicLit:
-		return nodlit(p.basicLit(expr))
+		n := nodlit(p.basicLit(expr))
+		n.SetDiag(expr.Bad) // avoid follow-on errors if there was a syntax error
+		return n
 	case *syntax.CompositeLit:
 		n := p.nod(expr, OCOMPLIT, nil, nil)
 		if expr.Type != nil {
@@ -739,7 +762,7 @@ func (p *noder) sum(x syntax.Expr) *Node {
 	n := p.expr(x)
 	if Isconst(n, CTSTR) && n.Sym == nil {
 		nstr = n
-		chunks = append(chunks, nstr.Val().U.(string))
+		chunks = append(chunks, strlit(nstr))
 	}
 
 	for i := len(adds) - 1; i >= 0; i-- {
@@ -749,12 +772,12 @@ func (p *noder) sum(x syntax.Expr) *Node {
 		if Isconst(r, CTSTR) && r.Sym == nil {
 			if nstr != nil {
 				// Collapse r into nstr instead of adding to n.
-				chunks = append(chunks, r.Val().U.(string))
+				chunks = append(chunks, strlit(r))
 				continue
 			}
 
 			nstr = r
-			chunks = append(chunks, nstr.Val().U.(string))
+			chunks = append(chunks, strlit(nstr))
 		} else {
 			if len(chunks) > 1 {
 				nstr.SetVal(Val{U: strings.Join(chunks, "")})
@@ -1165,7 +1188,7 @@ func (p *noder) caseClauses(clauses []*syntax.CaseClause, tswitch *Node, rbrace 
 		}
 		p.openScope(clause.Pos())
 
-		n := p.nod(clause, OXCASE, nil, nil)
+		n := p.nod(clause, OCASE, nil, nil)
 		if clause.Cases != nil {
 			n.List.Set(p.exprList(clause.Cases))
 		}
@@ -1221,7 +1244,7 @@ func (p *noder) commClauses(clauses []*syntax.CommClause, rbrace syntax.Pos) []*
 		}
 		p.openScope(clause.Pos())
 
-		n := p.nod(clause, OXCASE, nil, nil)
+		n := p.nod(clause, OCASE, nil, nil)
 		if clause.Comm != nil {
 			n.List.Set1(p.stmt(clause.Comm))
 		}
@@ -1304,53 +1327,90 @@ func (p *noder) binOp(op syntax.Operator) Op {
 	return binOps[op]
 }
 
+// checkLangCompat reports an error if the representation of a numeric
+// literal is not compatible with the current language version.
+func checkLangCompat(lit *syntax.BasicLit) {
+	s := lit.Value
+	if len(s) <= 2 || langSupported(1, 13) {
+		return
+	}
+	// len(s) > 2
+	if strings.Contains(s, "_") {
+		yyerror("underscores in numeric literals only supported as of -lang=go1.13")
+		return
+	}
+	if s[0] != '0' {
+		return
+	}
+	base := s[1]
+	if base == 'b' || base == 'B' {
+		yyerror("binary literals only supported as of -lang=go1.13")
+		return
+	}
+	if base == 'o' || base == 'O' {
+		yyerror("0o/0O-style octal literals only supported as of -lang=go1.13")
+		return
+	}
+	if lit.Kind != syntax.IntLit && (base == 'x' || base == 'X') {
+		yyerror("hexadecimal floating-point literals only supported as of -lang=go1.13")
+	}
+}
+
 func (p *noder) basicLit(lit *syntax.BasicLit) Val {
-	// TODO: Don't try to convert if we had syntax errors (conversions may fail).
-	//       Use dummy values so we can continue to compile. Eventually, use a
-	//       form of "unknown" literals that are ignored during type-checking so
-	//       we can continue type-checking w/o spurious follow-up errors.
+	// We don't use the errors of the conversion routines to determine
+	// if a literal string is valid because the conversion routines may
+	// accept a wider syntax than the language permits. Rely on lit.Bad
+	// instead.
 	switch s := lit.Value; lit.Kind {
 	case syntax.IntLit:
+		checkLangCompat(lit)
 		x := new(Mpint)
-		x.SetString(s)
+		if !lit.Bad {
+			x.SetString(s)
+		}
 		return Val{U: x}
 
 	case syntax.FloatLit:
+		checkLangCompat(lit)
 		x := newMpflt()
-		x.SetString(s)
+		if !lit.Bad {
+			x.SetString(s)
+		}
 		return Val{U: x}
 
 	case syntax.ImagLit:
-		x := new(Mpcplx)
-		x.Imag.SetString(strings.TrimSuffix(s, "i"))
+		checkLangCompat(lit)
+		x := newMpcmplx()
+		if !lit.Bad {
+			x.Imag.SetString(strings.TrimSuffix(s, "i"))
+		}
 		return Val{U: x}
 
 	case syntax.RuneLit:
-		var r rune
-		if u, err := strconv.Unquote(s); err == nil && len(u) > 0 {
-			// Package syntax already reported any errors.
-			// Check for them again though because 0 is a
-			// better fallback value for invalid rune
-			// literals than 0xFFFD.
+		x := new(Mpint)
+		x.Rune = true
+		if !lit.Bad {
+			u, _ := strconv.Unquote(s)
+			var r rune
 			if len(u) == 1 {
 				r = rune(u[0])
 			} else {
 				r, _ = utf8.DecodeRuneInString(u)
 			}
+			x.SetInt64(int64(r))
 		}
-		x := new(Mpint)
-		x.SetInt64(int64(r))
-		x.Rune = true
 		return Val{U: x}
 
 	case syntax.StringLit:
-		if len(s) > 0 && s[0] == '`' {
-			// strip carriage returns from raw string
-			s = strings.Replace(s, "\r", "", -1)
+		var x string
+		if !lit.Bad {
+			if len(s) > 0 && s[0] == '`' {
+				// strip carriage returns from raw string
+				s = strings.Replace(s, "\r", "", -1)
+			}
+			x, _ = strconv.Unquote(s)
 		}
-		// Ignore errors because package syntax already reported them.
-		u, _ := strconv.Unquote(s)
-		return Val{U: u}
+		return Val{U: x}
 
 	default:
 		panic("unhandled BasicLit kind")
@@ -1438,11 +1498,20 @@ func (p *noder) pragma(pos syntax.Pos, text string) syntax.Pragma {
 
 	case strings.HasPrefix(text, "go:linkname "):
 		f := strings.Fields(text)
-		if len(f) != 3 {
-			p.error(syntax.Error{Pos: pos, Msg: "usage: //go:linkname localname linkname"})
+		if !(2 <= len(f) && len(f) <= 3) {
+			p.error(syntax.Error{Pos: pos, Msg: "usage: //go:linkname localname [linkname]"})
 			break
 		}
-		p.linknames = append(p.linknames, linkname{pos, f[1], f[2]})
+		// The second argument is optional. If omitted, we use
+		// the default object symbol name for this and
+		// linkname only serves to mark this symbol as
+		// something that may be referenced via the object
+		// symbol name from another package.
+		var target string
+		if len(f) == 3 {
+			target = f[2]
+		}
+		p.linknames = append(p.linknames, linkname{pos, f[1], target})
 
 	case strings.HasPrefix(text, "go:cgo_import_dynamic "):
 		// This is permitted for general use because Solaris

@@ -1290,11 +1290,9 @@ func elfshreloc(arch *sys.Arch, sect *sym.Section) *ElfShdr {
 		return nil
 	}
 
-	var typ int
+	typ := SHT_REL
 	if elfRelType == ".rela" {
 		typ = SHT_RELA
-	} else {
-		typ = SHT_REL
 	}
 
 	sh := elfshname(elfRelType + sect.Name)
@@ -1441,6 +1439,7 @@ func (ctxt *Link) doelf() {
 	Addstring(shstrtab, ".data")
 	Addstring(shstrtab, ".bss")
 	Addstring(shstrtab, ".noptrbss")
+	Addstring(shstrtab, ".go.buildinfo")
 
 	// generate .tbss section for dynamic internal linker or external
 	// linking, so that various binutils could correctly calculate
@@ -1487,6 +1486,7 @@ func (ctxt *Link) doelf() {
 		if ctxt.UseRelro() {
 			Addstring(shstrtab, elfRelType+".data.rel.ro")
 		}
+		Addstring(shstrtab, elfRelType+".go.buildinfo")
 
 		// add a .note.GNU-stack section to mark the stack as non-executable
 		Addstring(shstrtab, ".note.GNU-stack")
@@ -1840,6 +1840,11 @@ func Asmbelf(ctxt *Link, symo int64) {
 		sh.type_ = SHT_PROGBITS
 		sh.flags = SHF_ALLOC
 		sh.addralign = 1
+
+		if interpreter == "" && objabi.GO_LDSO != "" {
+			interpreter = objabi.GO_LDSO
+		}
+
 		if interpreter == "" {
 			switch ctxt.HeadType {
 			case objabi.Hlinux:
@@ -1937,8 +1942,17 @@ func Asmbelf(ctxt *Link, symo int64) {
 		sh.addralign = uint64(ctxt.Arch.RegSize)
 		sh.link = uint32(elfshname(".dynstr").shnum)
 
-		// sh->info = index of first non-local symbol (number of local symbols)
-		shsym(sh, ctxt.Syms.Lookup(".dynsym", 0))
+		// sh.info is the index of first non-local symbol (number of local symbols)
+		s := ctxt.Syms.Lookup(".dynsym", 0)
+		i := uint32(0)
+		for sub := s; sub != nil; sub = sub.Sub {
+			i++
+			if !sub.Attr.Local() {
+				break
+			}
+		}
+		sh.info = i
+		shsym(sh, s)
 
 		sh = elfshname(".dynstr")
 		sh.type_ = SHT_STRTAB

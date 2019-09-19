@@ -159,9 +159,7 @@ func yyerror(format string, args ...interface{}) {
 }
 
 func Warn(fmt_ string, args ...interface{}) {
-	adderr(lineno, fmt_, args...)
-
-	hcrash()
+	Warnl(lineno, fmt_, args...)
 }
 
 func Warnl(line src.XPos, fmt_ string, args ...interface{}) {
@@ -196,30 +194,37 @@ func Fatalf(fmt_ string, args ...interface{}) {
 	errorexit()
 }
 
-func setlineno(n *Node) src.XPos {
-	lno := lineno
-	if n != nil {
-		switch n.Op {
-		case ONAME, OPACK:
-			break
-
-		case OLITERAL, OTYPE:
-			if n.Sym != nil {
-				break
-			}
-			fallthrough
-
-		default:
-			lineno = n.Pos
-			if !lineno.IsKnown() {
-				if Debug['K'] != 0 {
-					Warn("setlineno: unknown position (line 0)")
-				}
-				lineno = lno
-			}
+// hasUniquePos reports whether n has a unique position that can be
+// used for reporting error messages.
+//
+// It's primarily used to distinguish references to named objects,
+// whose Pos will point back to their declaration position rather than
+// their usage position.
+func hasUniquePos(n *Node) bool {
+	switch n.Op {
+	case ONAME, OPACK:
+		return false
+	case OLITERAL, OTYPE:
+		if n.Sym != nil {
+			return false
 		}
 	}
 
+	if !n.Pos.IsKnown() {
+		if Debug['K'] != 0 {
+			Warn("setlineno: unknown position (line 0)")
+		}
+		return false
+	}
+
+	return true
+}
+
+func setlineno(n *Node) src.XPos {
+	lno := lineno
+	if n != nil && hasUniquePos(n) {
+		lineno = n.Pos
+	}
 	return lno
 }
 
@@ -306,20 +311,20 @@ func nodl(pos src.XPos, op Op, nleft, nright *Node) *Node {
 	switch op {
 	case OCLOSURE, ODCLFUNC:
 		var x struct {
-			Node
-			Func
+			n Node
+			f Func
 		}
-		n = &x.Node
-		n.Func = &x.Func
+		n = &x.n
+		n.Func = &x.f
 	case ONAME:
 		Fatalf("use newname instead")
 	case OLABEL, OPACK:
 		var x struct {
-			Node
-			Name
+			n Node
+			m Name
 		}
-		n = &x.Node
-		n.Name = &x.Name
+		n = &x.n
+		n.Name = &x.m
 	default:
 		n = new(Node)
 	}
@@ -347,13 +352,13 @@ func newnamel(pos src.XPos, s *types.Sym) *Node {
 	}
 
 	var x struct {
-		Node
-		Name
-		Param
+		n Node
+		m Name
+		p Param
 	}
-	n := &x.Node
-	n.Name = &x.Name
-	n.Name.Param = &x.Param
+	n := &x.n
+	n.Name = &x.m
+	n.Name.Param = &x.p
 
 	n.Op = ONAME
 	n.Pos = pos
@@ -416,12 +421,6 @@ func nodintconst(v int64) *Node {
 	return nodlit(Val{u})
 }
 
-func nodfltconst(v *Mpflt) *Node {
-	u := newMpflt()
-	u.Set(v)
-	return nodlit(Val{u})
-}
-
 func nodnil() *Node {
 	return nodlit(Val{new(NilVal)})
 }
@@ -435,10 +434,9 @@ func nodstr(s string) *Node {
 }
 
 // treecopy recursively copies n, with the exception of
-// ONAME, OLITERAL, OTYPE, and non-iota ONONAME leaves.
-// Copies of iota ONONAME nodes are assigned the current
-// value of iota_. If pos.IsKnown(), it sets the source
-// position of newly allocated nodes to pos.
+// ONAME, OLITERAL, OTYPE, and ONONAME leaves.
+// If pos.IsKnown(), it sets the source position of newly
+// allocated nodes to pos.
 func treecopy(n *Node, pos src.XPos) *Node {
 	if n == nil {
 		return nil
@@ -535,26 +533,6 @@ func methtype(t *types.Type) *types.Type {
 		return t
 	}
 	return nil
-}
-
-// Are t1 and t2 equal struct types when field names are ignored?
-// For deciding whether the result struct from g can be copied
-// directly when compiling f(g()).
-func eqtypenoname(t1 *types.Type, t2 *types.Type) bool {
-	if t1 == nil || t2 == nil || !t1.IsStruct() || !t2.IsStruct() {
-		return false
-	}
-
-	if t1.NumFields() != t2.NumFields() {
-		return false
-	}
-	for i, f1 := range t1.FieldSlice() {
-		f2 := t2.Field(i)
-		if !types.Identical(f1.Type, f2.Type) {
-			return false
-		}
-	}
-	return true
 }
 
 // Is type src assignment compatible to type dst?
@@ -820,11 +798,10 @@ func assignconvfn(n *Node, t *types.Type, context func() string) *Node {
 		yyerror("use of untyped nil")
 	}
 
-	old := n
-	od := old.Diag()
-	old.SetDiag(true) // silence errors about n; we'll issue one below
-	n = defaultlit(n, t)
-	old.SetDiag(od)
+	n = convlit1(n, t, false, context)
+	if n.Type == nil {
+		return n
+	}
 	if t.Etype == TBLANK {
 		return n
 	}
@@ -848,9 +825,7 @@ func assignconvfn(n *Node, t *types.Type, context func() string) *Node {
 	var why string
 	op := assignop(n.Type, t, &why)
 	if op == 0 {
-		if !old.Diag() {
-			yyerror("cannot use %L as type %v in %s%s", n, t, context(), why)
-		}
+		yyerror("cannot use %L as type %v in %s%s", n, t, context(), why)
 		op = OCONV
 	}
 
@@ -1200,7 +1175,7 @@ func lookdot0(s *types.Sym, t *types.Type, save **types.Field, ignorecase bool) 
 	c := 0
 	if u.IsStruct() || u.IsInterface() {
 		for _, f := range u.Fields().Slice() {
-			if f.Sym == s || (ignorecase && f.Type.Etype == TFUNC && f.Type.Recv() != nil && strings.EqualFold(f.Sym.Name, s.Name)) {
+			if f.Sym == s || (ignorecase && f.IsMethod() && strings.EqualFold(f.Sym.Name, s.Name)) {
 				if save != nil {
 					*save = f
 				}
@@ -1308,7 +1283,7 @@ func dotpath(s *types.Sym, t *types.Type, save **types.Field, ignorecase bool) (
 // will give shortest unique addressing.
 // modify the tree with missing type names.
 func adddot(n *Node) *Node {
-	n.Left = typecheck(n.Left, Etype|ctxExpr)
+	n.Left = typecheck(n.Left, ctxType|ctxExpr)
 	if n.Left.Diag() {
 		n.SetDiag(true)
 	}
@@ -1440,7 +1415,7 @@ func expandmeth(t *types.Type) {
 		}
 
 		// dotpath may have dug out arbitrary fields, we only want methods.
-		if f.Type.Etype != TFUNC || f.Type.Recv() == nil {
+		if !f.IsMethod() {
 			continue
 		}
 
@@ -1517,8 +1492,9 @@ func genwrapper(rcvr *types.Type, method *types.Field, newnam *types.Sym) {
 		return
 	}
 
-	// Only generate I.M wrappers for I in I's own package.
-	if rcvr.IsInterface() && rcvr.Sym != nil && rcvr.Sym.Pkg != localpkg {
+	// Only generate I.M wrappers for I in I's own package
+	// but keep doing it for error.Error (was issue #29304).
+	if rcvr.IsInterface() && rcvr.Sym != nil && rcvr.Sym.Pkg != localpkg && rcvr != types.Errortype {
 		return
 	}
 
@@ -1600,7 +1576,7 @@ func genwrapper(rcvr *types.Type, method *types.Field, newnam *types.Sym) {
 	if rcvr.IsPtr() && rcvr.Elem() == method.Type.Recv().Type && rcvr.Elem().Sym != nil {
 		inlcalls(fn)
 	}
-	escAnalyze([]*Node{fn}, false)
+	escapeFuncs([]*Node{fn}, false)
 
 	Curfn = nil
 	funccompile(fn)
@@ -1650,7 +1626,7 @@ func ifacelookdot(s *types.Sym, t *types.Type, ignorecase bool) (m *types.Field,
 		}
 	}
 
-	if m.Type.Etype != TFUNC || m.Type.Recv() == nil {
+	if !m.IsMethod() {
 		yyerror("%v.%v is a field, not a method", t, s)
 		return nil, followptr
 	}
@@ -1846,18 +1822,6 @@ func isbadimport(path string, allowSpace bool) bool {
 	}
 
 	return false
-}
-
-func checknil(x *Node, init *Nodes) {
-	x = walkexpr(x, nil) // caller has not done this yet
-	if x.Type.IsInterface() {
-		x = nod(OITAB, x, nil)
-		x = typecheck(x, ctxExpr)
-	}
-
-	n := nod(OCHECKNIL, x, nil)
-	n.SetTypecheck(1)
-	init.Append(n)
 }
 
 // Can this type be stored directly in an interface word?

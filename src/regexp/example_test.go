@@ -7,6 +7,7 @@ package regexp_test
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 func Example() {
@@ -93,9 +94,11 @@ func ExampleRegexp_FindSubmatch() {
 func ExampleRegexp_Match() {
 	re := regexp.MustCompile(`foo.?`)
 	fmt.Println(re.Match([]byte(`seafood fool`)))
+	fmt.Println(re.Match([]byte(`something else`)))
 
 	// Output:
 	// true
+	// false
 }
 
 func ExampleRegexp_FindString() {
@@ -180,6 +183,30 @@ func ExampleRegexp_MatchString() {
 	// true
 }
 
+func ExampleRegexp_NumSubexp() {
+	re0 := regexp.MustCompile(`a.`)
+	fmt.Printf("%d\n", re0.NumSubexp())
+
+	re := regexp.MustCompile(`(.*)((a)b)(.*)a`)
+	fmt.Println(re.NumSubexp())
+	// Output:
+	// 0
+	// 4
+}
+
+func ExampleRegexp_ReplaceAll() {
+	re := regexp.MustCompile(`a(x*)b`)
+	fmt.Printf("%s\n", re.ReplaceAll([]byte("-ab-axxb-"), []byte("T")))
+	fmt.Printf("%s\n", re.ReplaceAll([]byte("-ab-axxb-"), []byte("$1")))
+	fmt.Printf("%s\n", re.ReplaceAll([]byte("-ab-axxb-"), []byte("$1W")))
+	fmt.Printf("%s\n", re.ReplaceAll([]byte("-ab-axxb-"), []byte("${1}W")))
+	// Output:
+	// -T-T-
+	// --xx-
+	// ---
+	// -W-xxW-
+}
+
 func ExampleRegexp_ReplaceAllLiteralString() {
 	re := regexp.MustCompile(`a(x*)b`)
 	fmt.Println(re.ReplaceAllLiteralString("-ab-axxb-", "T"))
@@ -202,6 +229,13 @@ func ExampleRegexp_ReplaceAllString() {
 	// --xx-
 	// ---
 	// -W-xxW-
+}
+
+func ExampleRegexp_ReplaceAllStringFunc() {
+	re := regexp.MustCompile(`[^aeiou]`)
+	fmt.Println(re.ReplaceAllStringFunc("seafood fool", strings.ToUpper))
+	// Output:
+	// SeaFooD FooL
 }
 
 func ExampleRegexp_SubexpNames() {
@@ -320,6 +354,7 @@ func ExampleRegexp_FindIndex() {
 	// [18 33]
 	// option1: value1
 }
+
 func ExampleRegexp_FindAllSubmatchIndex() {
 	content := []byte(`
 	# comment line
@@ -344,4 +379,14 @@ func ExampleRegexp_FindAllSubmatchIndex() {
 	// option2: value2
 	// option2
 	// value2
+}
+
+func ExampleRegexp_FindAllIndex() {
+	content := []byte("London")
+	re := regexp.MustCompile(`o.`)
+	fmt.Println(re.FindAllIndex(content, 1))
+	fmt.Println(re.FindAllIndex(content, -1))
+	// Output:
+	// [[1 3]]
+	// [[1 3] [4 6]]
 }

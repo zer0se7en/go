@@ -79,6 +79,95 @@ type Optab struct {
 	scond uint16
 }
 
+func IsAtomicInstruction(as obj.As) bool {
+	_, ok := atomicInstructions[as]
+	return ok
+}
+
+// known field values of an instruction.
+var atomicInstructions = map[obj.As]uint32{
+	ALDADDAD:  3<<30 | 0x1c5<<21 | 0x00<<10,
+	ALDADDAW:  2<<30 | 0x1c5<<21 | 0x00<<10,
+	ALDADDAH:  1<<30 | 0x1c5<<21 | 0x00<<10,
+	ALDADDAB:  0<<30 | 0x1c5<<21 | 0x00<<10,
+	ALDADDALD: 3<<30 | 0x1c7<<21 | 0x00<<10,
+	ALDADDALW: 2<<30 | 0x1c7<<21 | 0x00<<10,
+	ALDADDALH: 1<<30 | 0x1c7<<21 | 0x00<<10,
+	ALDADDALB: 0<<30 | 0x1c7<<21 | 0x00<<10,
+	ALDADDD:   3<<30 | 0x1c1<<21 | 0x00<<10,
+	ALDADDW:   2<<30 | 0x1c1<<21 | 0x00<<10,
+	ALDADDH:   1<<30 | 0x1c1<<21 | 0x00<<10,
+	ALDADDB:   0<<30 | 0x1c1<<21 | 0x00<<10,
+	ALDADDLD:  3<<30 | 0x1c3<<21 | 0x00<<10,
+	ALDADDLW:  2<<30 | 0x1c3<<21 | 0x00<<10,
+	ALDADDLH:  1<<30 | 0x1c3<<21 | 0x00<<10,
+	ALDADDLB:  0<<30 | 0x1c3<<21 | 0x00<<10,
+	ALDANDAD:  3<<30 | 0x1c5<<21 | 0x04<<10,
+	ALDANDAW:  2<<30 | 0x1c5<<21 | 0x04<<10,
+	ALDANDAH:  1<<30 | 0x1c5<<21 | 0x04<<10,
+	ALDANDAB:  0<<30 | 0x1c5<<21 | 0x04<<10,
+	ALDANDALD: 3<<30 | 0x1c7<<21 | 0x04<<10,
+	ALDANDALW: 2<<30 | 0x1c7<<21 | 0x04<<10,
+	ALDANDALH: 1<<30 | 0x1c7<<21 | 0x04<<10,
+	ALDANDALB: 0<<30 | 0x1c7<<21 | 0x04<<10,
+	ALDANDD:   3<<30 | 0x1c1<<21 | 0x04<<10,
+	ALDANDW:   2<<30 | 0x1c1<<21 | 0x04<<10,
+	ALDANDH:   1<<30 | 0x1c1<<21 | 0x04<<10,
+	ALDANDB:   0<<30 | 0x1c1<<21 | 0x04<<10,
+	ALDANDLD:  3<<30 | 0x1c3<<21 | 0x04<<10,
+	ALDANDLW:  2<<30 | 0x1c3<<21 | 0x04<<10,
+	ALDANDLH:  1<<30 | 0x1c3<<21 | 0x04<<10,
+	ALDANDLB:  0<<30 | 0x1c3<<21 | 0x04<<10,
+	ALDEORAD:  3<<30 | 0x1c5<<21 | 0x08<<10,
+	ALDEORAW:  2<<30 | 0x1c5<<21 | 0x08<<10,
+	ALDEORAH:  1<<30 | 0x1c5<<21 | 0x08<<10,
+	ALDEORAB:  0<<30 | 0x1c5<<21 | 0x08<<10,
+	ALDEORALD: 3<<30 | 0x1c7<<21 | 0x08<<10,
+	ALDEORALW: 2<<30 | 0x1c7<<21 | 0x08<<10,
+	ALDEORALH: 1<<30 | 0x1c7<<21 | 0x08<<10,
+	ALDEORALB: 0<<30 | 0x1c7<<21 | 0x08<<10,
+	ALDEORD:   3<<30 | 0x1c1<<21 | 0x08<<10,
+	ALDEORW:   2<<30 | 0x1c1<<21 | 0x08<<10,
+	ALDEORH:   1<<30 | 0x1c1<<21 | 0x08<<10,
+	ALDEORB:   0<<30 | 0x1c1<<21 | 0x08<<10,
+	ALDEORLD:  3<<30 | 0x1c3<<21 | 0x08<<10,
+	ALDEORLW:  2<<30 | 0x1c3<<21 | 0x08<<10,
+	ALDEORLH:  1<<30 | 0x1c3<<21 | 0x08<<10,
+	ALDEORLB:  0<<30 | 0x1c3<<21 | 0x08<<10,
+	ALDORAD:   3<<30 | 0x1c5<<21 | 0x0c<<10,
+	ALDORAW:   2<<30 | 0x1c5<<21 | 0x0c<<10,
+	ALDORAH:   1<<30 | 0x1c5<<21 | 0x0c<<10,
+	ALDORAB:   0<<30 | 0x1c5<<21 | 0x0c<<10,
+	ALDORALD:  3<<30 | 0x1c7<<21 | 0x0c<<10,
+	ALDORALW:  2<<30 | 0x1c7<<21 | 0x0c<<10,
+	ALDORALH:  1<<30 | 0x1c7<<21 | 0x0c<<10,
+	ALDORALB:  0<<30 | 0x1c7<<21 | 0x0c<<10,
+	ALDORD:    3<<30 | 0x1c1<<21 | 0x0c<<10,
+	ALDORW:    2<<30 | 0x1c1<<21 | 0x0c<<10,
+	ALDORH:    1<<30 | 0x1c1<<21 | 0x0c<<10,
+	ALDORB:    0<<30 | 0x1c1<<21 | 0x0c<<10,
+	ALDORLD:   3<<30 | 0x1c3<<21 | 0x0c<<10,
+	ALDORLW:   2<<30 | 0x1c3<<21 | 0x0c<<10,
+	ALDORLH:   1<<30 | 0x1c3<<21 | 0x0c<<10,
+	ALDORLB:   0<<30 | 0x1c3<<21 | 0x0c<<10,
+	ASWPAD:    3<<30 | 0x1c5<<21 | 0x20<<10,
+	ASWPAW:    2<<30 | 0x1c5<<21 | 0x20<<10,
+	ASWPAH:    1<<30 | 0x1c5<<21 | 0x20<<10,
+	ASWPAB:    0<<30 | 0x1c5<<21 | 0x20<<10,
+	ASWPALD:   3<<30 | 0x1c7<<21 | 0x20<<10,
+	ASWPALW:   2<<30 | 0x1c7<<21 | 0x20<<10,
+	ASWPALH:   1<<30 | 0x1c7<<21 | 0x20<<10,
+	ASWPALB:   0<<30 | 0x1c7<<21 | 0x20<<10,
+	ASWPD:     3<<30 | 0x1c1<<21 | 0x20<<10,
+	ASWPW:     2<<30 | 0x1c1<<21 | 0x20<<10,
+	ASWPH:     1<<30 | 0x1c1<<21 | 0x20<<10,
+	ASWPB:     0<<30 | 0x1c1<<21 | 0x20<<10,
+	ASWPLD:    3<<30 | 0x1c3<<21 | 0x20<<10,
+	ASWPLW:    2<<30 | 0x1c3<<21 | 0x20<<10,
+	ASWPLH:    1<<30 | 0x1c3<<21 | 0x20<<10,
+	ASWPLB:    0<<30 | 0x1c3<<21 | 0x20<<10,
+}
+
 var oprange [ALAST & obj.AMask][]Optab
 
 var xcmp [C_NCLASS][C_NCLASS]bool
@@ -691,16 +780,34 @@ var optab = []Optab{
 	{ASTLXR, C_REG, C_NONE, C_NONE, C_ZOREG, 59, 4, 0, 0, 0}, // RegTo2=C_REG
 	{ASTXP, C_PAIR, C_NONE, C_NONE, C_ZOREG, 59, 4, 0, 0, 0},
 
-	/* VLD1/VST1 */
+	/* VLD[1-4]/VST[1-4] */
 	{AVLD1, C_ZOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, 0},
 	{AVLD1, C_LOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
 	{AVLD1, C_ROFF, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD2, C_ZOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, 0},
+	{AVLD2, C_LOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD2, C_ROFF, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD3, C_ZOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, 0},
+	{AVLD3, C_LOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD3, C_ROFF, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD4, C_ZOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, 0},
+	{AVLD4, C_LOREG, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
+	{AVLD4, C_ROFF, C_NONE, C_NONE, C_LIST, 81, 4, 0, 0, C_XPOST},
 	{AVLD1, C_LOREG, C_NONE, C_NONE, C_ELEM, 97, 4, 0, 0, C_XPOST},
 	{AVLD1, C_ROFF, C_NONE, C_NONE, C_ELEM, 97, 4, 0, 0, C_XPOST},
 	{AVLD1, C_LOREG, C_NONE, C_NONE, C_ELEM, 97, 4, 0, 0, 0},
 	{AVST1, C_LIST, C_NONE, C_NONE, C_ZOREG, 84, 4, 0, 0, 0},
 	{AVST1, C_LIST, C_NONE, C_NONE, C_LOREG, 84, 4, 0, 0, C_XPOST},
 	{AVST1, C_LIST, C_NONE, C_NONE, C_ROFF, 84, 4, 0, 0, C_XPOST},
+	{AVST2, C_LIST, C_NONE, C_NONE, C_ZOREG, 84, 4, 0, 0, 0},
+	{AVST2, C_LIST, C_NONE, C_NONE, C_LOREG, 84, 4, 0, 0, C_XPOST},
+	{AVST2, C_LIST, C_NONE, C_NONE, C_ROFF, 84, 4, 0, 0, C_XPOST},
+	{AVST3, C_LIST, C_NONE, C_NONE, C_ZOREG, 84, 4, 0, 0, 0},
+	{AVST3, C_LIST, C_NONE, C_NONE, C_LOREG, 84, 4, 0, 0, C_XPOST},
+	{AVST3, C_LIST, C_NONE, C_NONE, C_ROFF, 84, 4, 0, 0, C_XPOST},
+	{AVST4, C_LIST, C_NONE, C_NONE, C_ZOREG, 84, 4, 0, 0, 0},
+	{AVST4, C_LIST, C_NONE, C_NONE, C_LOREG, 84, 4, 0, 0, C_XPOST},
+	{AVST4, C_LIST, C_NONE, C_NONE, C_ROFF, 84, 4, 0, 0, C_XPOST},
 	{AVST1, C_ELEM, C_NONE, C_NONE, C_LOREG, 96, 4, 0, 0, C_XPOST},
 	{AVST1, C_ELEM, C_NONE, C_NONE, C_ROFF, 96, 4, 0, 0, C_XPOST},
 	{AVST1, C_ELEM, C_NONE, C_NONE, C_LOREG, 96, 4, 0, 0, 0},
@@ -751,15 +858,6 @@ var pstatefield = []struct {
 	{REG_SPSel, 0<<16 | 4<<12 | 5<<5},
 	{REG_DAIFSet, 3<<16 | 4<<12 | 6<<5},
 	{REG_DAIFClr, 3<<16 | 4<<12 | 7<<5},
-}
-
-// the System register values, and value to use in instruction
-var systemreg = []struct {
-	reg int16
-	enc uint32
-}{
-	{REG_ELR_EL1, 8<<16 | 4<<12 | 1<<5},
-	{REG_DCZID_EL0, 3<<19 | 3<<16 | 7<<5},
 }
 
 var prfopfield = []struct {
@@ -1183,7 +1281,7 @@ func isaddcon(v int64) bool {
 	return v <= 0xFFF
 }
 
-// isbitcon returns whether a constant can be encoded into a logical instruction.
+// isbitcon reports whether a constant can be encoded into a logical instruction.
 // bitcon has a binary form of repetition of a bit sequence of length 2, 4, 8, 16, 32, or 64,
 // which itself is a rotate (w.r.t. the length of the unit) of a sequence of ones.
 // special cases: 0 and -1 are not bitcon.
@@ -1463,7 +1561,7 @@ func rclass(r int16) int {
 	return C_GOK
 }
 
-// con32class reclassifies the constant of 32-bit instruction. Becuase the constant type is 32-bit,
+// con32class reclassifies the constant of 32-bit instruction. Because the constant type is 32-bit,
 // but saved in Offset which type is int64, con32class treats it as uint32 type and reclassifies it.
 func (c *ctxt7) con32class(a *obj.Addr) int {
 	v := uint32(a.Offset)
@@ -2213,33 +2311,9 @@ func buildop(ctxt *obj.Link) {
 			oprangeset(AMOVZW, t)
 
 		case ASWPD:
-			oprangeset(ASWPALD, t)
-			oprangeset(ASWPB, t)
-			oprangeset(ASWPH, t)
-			oprangeset(ASWPW, t)
-			oprangeset(ASWPALB, t)
-			oprangeset(ASWPALH, t)
-			oprangeset(ASWPALW, t)
-			oprangeset(ALDADDALB, t)
-			oprangeset(ALDADDALH, t)
-			oprangeset(ALDADDALW, t)
-			oprangeset(ALDADDALD, t)
-			oprangeset(ALDADDB, t)
-			oprangeset(ALDADDH, t)
-			oprangeset(ALDADDW, t)
-			oprangeset(ALDADDD, t)
-			oprangeset(ALDANDB, t)
-			oprangeset(ALDANDH, t)
-			oprangeset(ALDANDW, t)
-			oprangeset(ALDANDD, t)
-			oprangeset(ALDEORB, t)
-			oprangeset(ALDEORH, t)
-			oprangeset(ALDEORW, t)
-			oprangeset(ALDEORD, t)
-			oprangeset(ALDORB, t)
-			oprangeset(ALDORH, t)
-			oprangeset(ALDORW, t)
-			oprangeset(ALDORD, t)
+			for i := range atomicInstructions {
+				oprangeset(i, t)
+			}
 
 		case ABEQ:
 			oprangeset(ABNE, t)
@@ -2639,7 +2713,13 @@ func buildop(ctxt *obj.Link) {
 			AVCNT,
 			AVMOV,
 			AVLD1,
+			AVLD2,
+			AVLD3,
+			AVLD4,
 			AVST1,
+			AVST2,
+			AVST3,
+			AVST4,
 			AVTBL,
 			AVDUP,
 			AVMOVI,
@@ -2719,14 +2799,14 @@ func (c *ctxt7) checkindex(p *obj.Prog, index, maxindex int) {
 	}
 }
 
-/* checkoffset checks whether the immediate offset is valid for VLD1.P and VST1.P */
+/* checkoffset checks whether the immediate offset is valid for VLD[1-4].P and VST[1-4].P */
 func (c *ctxt7) checkoffset(p *obj.Prog, as obj.As) {
-	var offset, list, n int64
+	var offset, list, n, expect int64
 	switch as {
-	case AVLD1:
+	case AVLD1, AVLD2, AVLD3, AVLD4:
 		offset = p.From.Offset
 		list = p.To.Offset
-	case AVST1:
+	case AVST1, AVST2, AVST3, AVST4:
 		offset = p.To.Offset
 		list = p.From.Offset
 	default:
@@ -2751,6 +2831,21 @@ func (c *ctxt7) checkoffset(p *obj.Prog, as obj.As) {
 	}
 	if !(q == 0 && offset == n*8) && !(q == 1 && offset == n*16) {
 		c.ctxt.Diag("invalid post-increment offset: %v", p)
+	}
+
+	switch as {
+	case AVLD1, AVST1:
+		return
+	case AVLD2, AVST2:
+		expect = 2
+	case AVLD3, AVST3:
+		expect = 3
+	case AVLD4, AVST4:
+		expect = 4
+	}
+
+	if expect != n {
+		c.ctxt.Diag("expected %d registers, got %d: %v.", expect, n, p)
 	}
 }
 
@@ -2986,7 +3081,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		num := uint8(0)
 		cls := oclass(&p.From)
 		if isADDWop(p.As) {
-			if (cls != C_LCON) && (cls != C_ADDCON2) {
+			if !cmp(C_LCON, cls) {
 				c.ctxt.Diag("illegal combination: %v", p)
 			}
 			num = c.omovlconst(AMOVW, p, &p.From, REGTMP, os[:])
@@ -3271,7 +3366,7 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		num := uint8(0)
 		cls := oclass(&p.From)
 		if isANDWop(p.As) {
-			if (cls != C_LCON) && (cls != C_ADDCON) {
+			if !cmp(C_LCON, cls) {
 				c.ctxt.Diag("illegal combination: %v", p)
 			}
 			num = c.omovlconst(AMOVW, p, &p.From, REGTMP, os[:])
@@ -3448,12 +3543,8 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		o1 = c.oprrr(p, AMRS)
 
 		v := uint32(0)
-		for i := 0; i < len(systemreg); i++ {
-			if systemreg[i].reg == p.From.Reg {
-				v = systemreg[i].enc
-				break
-			}
-		}
+		// SysRegEnc function returns the system register encoding.
+		_, v = SysRegEnc(p.From.Reg)
 		if v == 0 {
 			c.ctxt.Diag("illegal system register:\n%v", p)
 		}
@@ -3468,12 +3559,8 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		o1 = c.oprrr(p, AMSR)
 
 		v := uint32(0)
-		for i := 0; i < len(systemreg); i++ {
-			if systemreg[i].reg == p.To.Reg {
-				v = systemreg[i].enc
-				break
-			}
-		}
+		// SysRegEnc function returns the system register encoding.
+		_, v = SysRegEnc(p.To.Reg)
 		if v == 0 {
 			c.ctxt.Diag("illegal system register:\n%v", p)
 		}
@@ -3659,39 +3746,17 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		o1 |= uint32(p.From.Reg&31) << 5
 		o1 |= uint32(p.To.Reg & 31)
 
-	case 47: /* SWPx Rs, (Rb), Rt: Rs -> (Rb) -> Rt */
+	case 47: /* SWPx/LDADDx/LDANDx/LDEORx/LDORx Rs, (Rb), Rt */
 		rs := p.From.Reg
 		rt := p.RegTo2
 		rb := p.To.Reg
-		switch p.As {
-		case ASWPD, ASWPALD, ALDADDALD, ALDADDD, ALDANDD, ALDEORD, ALDORD: // 64-bit
-			o1 = 3 << 30
-		case ASWPW, ASWPALW, ALDADDALW, ALDADDW, ALDANDW, ALDEORW, ALDORW: // 32-bit
-			o1 = 2 << 30
-		case ASWPH, ASWPALH, ALDADDALH, ALDADDH, ALDANDH, ALDEORH, ALDORH: // 16-bit
-			o1 = 1 << 30
-		case ASWPB, ASWPALB, ALDADDALB, ALDADDB, ALDANDB, ALDEORB, ALDORB: // 8-bit
-			o1 = 0 << 30
-		default:
-			c.ctxt.Diag("illegal instruction: %v\n", p)
+
+		fields := atomicInstructions[p.As]
+		// rt can't be sp. rt can't be r31 when field A is 0, A bit is the 23rd bit.
+		if rt == REG_RSP || (rt == REGZERO && (fields&(1<<23) == 0)) {
+			c.ctxt.Diag("illegal destination register: %v\n", p)
 		}
-		switch p.As {
-		case ASWPD, ASWPW, ASWPH, ASWPB, ASWPALD, ASWPALW, ASWPALH, ASWPALB:
-			o1 |= 0x20 << 10
-		case ALDADDALD, ALDADDALW, ALDADDALH, ALDADDALB, ALDADDD, ALDADDW, ALDADDH, ALDADDB:
-			o1 |= 0x00 << 10
-		case ALDANDD, ALDANDW, ALDANDH, ALDANDB:
-			o1 |= 0x04 << 10
-		case ALDEORD, ALDEORW, ALDEORH, ALDEORB:
-			o1 |= 0x08 << 10
-		case ALDORD, ALDORW, ALDORH, ALDORB:
-			o1 |= 0x0c << 10
-		}
-		switch p.As {
-		case ALDADDALD, ALDADDALW, ALDADDALH, ALDADDALB, ASWPALD, ASWPALW, ASWPALH, ASWPALB:
-			o1 |= 3 << 22
-		}
-		o1 |= 0x1c1<<21 | uint32(rs&31)<<16 | uint32(rb&31)<<5 | uint32(rt&31)
+		o1 |= fields | uint32(rs&31)<<16 | uint32(rb&31)<<5 | uint32(rt&31)
 
 	case 48: /* ADD $C_ADDCON2, Rm, Rd */
 		op := c.opirr(p, p.As)
@@ -3845,6 +3910,9 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			if (s == t || s == t2) || (s == n && n != REGSP) {
 				c.ctxt.Diag("constrained unpredictable behavior: %v", p)
 			}
+		}
+		if s == REG_RSP {
+			c.ctxt.Diag("illegal destination register: %v\n", p)
 		}
 		o1 = c.opstore(p, p.As)
 
@@ -4276,14 +4344,14 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 		}
 		o1 |= (uint32(imm5&0x1f) << 16) | (uint32(rf&31) << 5) | uint32(rt&31)
 
-	case 81: /* vld1 (Rn), [Vt1.<T>, Vt2.<T>, ...] */
+	case 81: /* vld[1-4] (Rn), [Vt1.<T>, Vt2.<T>, ...] */
+		c.checkoffset(p, p.As)
 		r := int(p.From.Reg)
 		o1 = 3<<26 | 1<<22
 		if o.scond == C_XPOST {
 			o1 |= 1 << 23
 			if p.From.Index == 0 {
 				// immediate offset variant
-				c.checkoffset(p, p.As)
 				o1 |= 0x1f << 16
 			} else {
 				// register offset variant
@@ -4294,6 +4362,9 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			}
 		}
 		o1 |= uint32(p.To.Offset)
+		// cmd/asm/internal/arch/arm64.go:ARM64RegisterListOffset
+		// add opcode(bit 12-15) for vld1, mask it off if it's not vld1
+		o1 = c.maskOpvldvst(p, o1)
 		o1 |= uint32(r&31) << 5
 
 	case 82: /* vmov Rn, Vd.<T> */
@@ -4381,14 +4452,14 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 
 		o1 |= (Q&1)<<30 | (size&3)<<22 | uint32(rf&31)<<5 | uint32(rt&31)
 
-	case 84: /* vst1 [Vt1.<T>, Vt2.<T>, ...], (Rn) */
+	case 84: /* vst[1-4] [Vt1.<T>, Vt2.<T>, ...], (Rn) */
+		c.checkoffset(p, p.As)
 		r := int(p.To.Reg)
 		o1 = 3 << 26
 		if o.scond == C_XPOST {
 			o1 |= 1 << 23
 			if p.To.Index == 0 {
 				// immediate offset variant
-				c.checkoffset(p, p.As)
 				o1 |= 0x1f << 16
 			} else {
 				// register offset variant
@@ -4399,6 +4470,9 @@ func (c *ctxt7) asmout(p *obj.Prog, o *Optab, out []uint32) {
 			}
 		}
 		o1 |= uint32(p.From.Offset)
+		// cmd/asm/internal/arch/arm64.go:ARM64RegisterListOffset
+		// add opcode(bit 12-15) for vst1, mask it off if it's not vst1
+		o1 = c.maskOpvldvst(p, o1)
 		o1 |= uint32(r&31) << 5
 
 	case 85: /* vaddv/vuaddlv Vn.<T>, Vd*/
@@ -6696,6 +6770,24 @@ func (c *ctxt7) opldpstp(p *obj.Prog, o *Optab, vo int32, rbase, rl, rh, ldp uin
 	}
 	ret |= 5<<27 | (ldp&1)<<22 | uint32(vo&0x7f)<<15 | (rh&31)<<10 | (rbase&31)<<5 | (rl & 31)
 	return ret
+}
+
+func (c *ctxt7) maskOpvldvst(p *obj.Prog, o1 uint32) uint32 {
+	if p.As == AVLD1 || p.As == AVST1 {
+		return o1
+	}
+
+	o1 &^= 0xf000 // mask out "opcode" field (bit 12-15)
+	switch p.As {
+	case AVLD2, AVST2:
+		o1 |= 8 << 12
+	case AVLD3, AVST3:
+		o1 |= 4 << 12
+	case AVLD4, AVST4:
+	default:
+		c.ctxt.Diag("unsupported instruction:%v\n", p.As)
+	}
+	return o1
 }
 
 /*

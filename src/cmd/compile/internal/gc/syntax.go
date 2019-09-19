@@ -12,6 +12,7 @@ import (
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"cmd/internal/src"
+	"sort"
 )
 
 // A Node is a single node in the syntax tree.
@@ -43,9 +44,11 @@ type Node struct {
 
 	// Various. Usually an offset into a struct. For example:
 	// - ONAME nodes that refer to local variables use it to identify their stack frame position.
-	// - ODOT, ODOTPTR, and OINDREGSP use it to indicate offset relative to their base address.
+	// - ODOT, ODOTPTR, and ORESULT use it to indicate offset relative to their base address.
 	// - OSTRUCTKEY uses it to store the named field's offset.
 	// - Named OLITERALs use it to store their ambient iota value.
+	// - OINLMARK stores an index into the inlTree data structure.
+	// - OCLOSURE uses it to store ambient iota value, if any.
 	// Possibly still more uses. If you find any, document them.
 	Xoffset int64
 
@@ -279,7 +282,7 @@ func (n *Node) isMethodExpression() bool {
 	return n.Op == ONAME && n.Left != nil && n.Left.Op == OTYPE && n.Right != nil && n.Right.Op == ONAME
 }
 
-// funcname returns the name of the function n.
+// funcname returns the name (without the package) of the function n.
 func (n *Node) funcname() string {
 	if n == nil || n.Func == nil || n.Func.Nname == nil {
 		return "<nil>"
@@ -597,10 +600,10 @@ const (
 	OSTR2RUNES    // Type(Left) (Type is []rune, Left is a string)
 	OAS           // Left = Right or (if Colas=true) Left := Right
 	OAS2          // List = Rlist (x, y, z = a, b, c)
-	OAS2FUNC      // List = Rlist (x, y = f())
-	OAS2RECV      // List = Rlist (x, ok = <-c)
-	OAS2MAPR      // List = Rlist (x, ok = m["foo"])
 	OAS2DOTTYPE   // List = Rlist (x, ok = I.(int))
+	OAS2FUNC      // List = Rlist (x, y = f())
+	OAS2MAPR      // List = Rlist (x, ok = m["foo"])
+	OAS2RECV      // List = Rlist (x, ok = <-c)
 	OASOP         // Left Etype= Right (x += y)
 	OCALL         // Left(List) (function call, method call or type conversion)
 
@@ -667,7 +670,8 @@ const (
 	ORSH         // Left >> Right
 	OAND         // Left & Right
 	OANDNOT      // Left &^ Right
-	ONEW         // new(Left)
+	ONEW         // new(Left); corresponds to calls to new in source code
+	ONEWOBJ      // runtime.newobject(n.Type); introduced by walk; Left is type descriptor
 	ONOT         // !Left
 	OBITNOT      // ^Left
 	OPLUS        // +Left
@@ -688,7 +692,7 @@ const (
 	ORECV        // <-Left
 	ORUNESTR     // Type(Left) (Type is string, Left is rune)
 	OSELRECV     // Left = <-Right.Left: (appears as .Left of OCASE; Right.Op == ORECV)
-	OSELRECV2    // List = <-Right.Left: (apperas as .Left of OCASE; count(List) == 2, Right.Op == ORECV)
+	OSELRECV2    // List = <-Right.Left: (appears as .Left of OCASE; count(List) == 2, Right.Op == ORECV)
 	OIOTA        // iota
 	OREAL        // real(Left)
 	OIMAG        // imag(Left)
@@ -700,8 +704,7 @@ const (
 	// statements
 	OBLOCK    // { List } (block of code)
 	OBREAK    // break [Sym]
-	OCASE     // case Left or List[0]..List[1]: Nbody (select case after processing; Left==nil and List==nil means default)
-	OXCASE    // case List: Nbody (select case before processing; List==nil means default)
+	OCASE     // case List: Nbody (List==nil means default)
 	OCONTINUE // continue [Sym]
 	ODEFER    // defer Left (Left must be call)
 	OEMPTY    // no-op (empty statement)
@@ -723,8 +726,8 @@ const (
 	OGO     // go Left (Left must be call)
 	ORANGE  // for List = range Right { Nbody }
 	ORETURN // return List
-	OSELECT // select { List } (List is list of OXCASE or OCASE)
-	OSWITCH // switch Ninit; Left { List } (List is a list of OXCASE or OCASE)
+	OSELECT // select { List } (List is list of OCASE)
+	OSWITCH // switch Ninit; Left { List } (List is a list of OCASE)
 	OTYPESW // Left = Right.(type) (appears as .Left of OSWITCH)
 
 	// types
@@ -749,7 +752,8 @@ const (
 	OVARDEF     // variable is about to be fully initialized
 	OVARKILL    // variable is dead
 	OVARLIVE    // variable is alive
-	OINDREGSP   // offset plus indirect of REGSP, such as 8(SP).
+	ORESULT     // result of a function call; Xoffset is stack offset
+	OINLMARK    // start of an inlined body, with file/line of caller. Xoffset is an index into the inline tree.
 
 	// arch-specific opcodes
 	ORETJMP // return to other function
@@ -966,4 +970,31 @@ func (q *nodeQueue) popLeft() *Node {
 	n := q.ring[q.head%len(q.ring)]
 	q.head++
 	return n
+}
+
+// NodeSet is a set of Nodes.
+type NodeSet map[*Node]struct{}
+
+// Has reports whether s contains n.
+func (s NodeSet) Has(n *Node) bool {
+	_, isPresent := s[n]
+	return isPresent
+}
+
+// Add adds n to s.
+func (s *NodeSet) Add(n *Node) {
+	if *s == nil {
+		*s = make(map[*Node]struct{})
+	}
+	(*s)[n] = struct{}{}
+}
+
+// Sorted returns s sorted according to less.
+func (s NodeSet) Sorted(less func(*Node, *Node) bool) []*Node {
+	var res []*Node
+	for n := range s {
+		res = append(res, n)
+	}
+	sort.Slice(res, func(i, j int) bool { return less(res[i], res[j]) })
+	return res
 }

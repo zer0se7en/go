@@ -240,6 +240,7 @@ const (
 	AMULLD
 	AMULHD
 	AMULHDU
+	AMLGR
 	ASUB
 	ASUBC
 	ASUBV
@@ -289,6 +290,20 @@ const (
 	ASRAD
 	ARLL
 	ARLLG
+	ARNSBG
+	ARXSBG
+	AROSBG
+	ARNSBGT
+	ARXSBGT
+	AROSBGT
+	ARISBG
+	ARISBGN
+	ARISBGZ
+	ARISBGNZ
+	ARISBHG
+	ARISBLG
+	ARISBHGZ
+	ARISBLGZ
 
 	// floating point
 	AFABS
@@ -365,6 +380,9 @@ const (
 	ATMHL
 	ATMLH
 	ATMLL
+
+	// insert program mask
+	AIPM
 
 	// compare and swap
 	ACS
@@ -948,6 +966,8 @@ const (
 	AVMSLEG
 	AVMSLOG
 	AVMSLEOG
+
+	ANOPH // NOP
 
 	// binary
 	ABYTE

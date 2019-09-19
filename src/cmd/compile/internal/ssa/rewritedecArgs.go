@@ -3,18 +3,6 @@
 
 package ssa
 
-import "fmt"
-import "math"
-import "cmd/internal/obj"
-import "cmd/internal/objabi"
-import "cmd/compile/internal/types"
-
-var _ = fmt.Println   // in case not otherwise used
-var _ = math.MinInt8  // in case not otherwise used
-var _ = obj.ANOP      // in case not otherwise used
-var _ = objabi.GOROOT // in case not otherwise used
-var _ = types.TypeMem // in case not otherwise used
-
 func rewriteValuedecArgs(v *Value) bool {
 	switch v.Op {
 	case OpArg:
@@ -24,13 +12,9 @@ func rewriteValuedecArgs(v *Value) bool {
 }
 func rewriteValuedecArgs_OpArg_0(v *Value) bool {
 	b := v.Block
-	_ = b
 	config := b.Func.Config
-	_ = config
 	fe := b.Func.fe
-	_ = fe
 	typ := &b.Func.Config.Types
-	_ = typ
 	// match: (Arg {n} [off])
 	// cond: v.Type.IsString()
 	// result: (StringMake (Arg <typ.BytePtr> {n} [off]) (Arg <typ.Int> {n} [off+config.PtrSize]))
@@ -242,9 +226,7 @@ func rewriteValuedecArgs_OpArg_0(v *Value) bool {
 }
 func rewriteValuedecArgs_OpArg_10(v *Value) bool {
 	b := v.Block
-	_ = b
 	fe := b.Func.fe
-	_ = fe
 	// match: (Arg <t>)
 	// cond: t.IsArray() && t.NumElem() == 0
 	// result: (ArrayMake0)
@@ -276,12 +258,6 @@ func rewriteValuedecArgs_OpArg_10(v *Value) bool {
 	return false
 }
 func rewriteBlockdecArgs(b *Block) bool {
-	config := b.Func.Config
-	_ = config
-	fe := b.Func.fe
-	_ = fe
-	typ := &config.Types
-	_ = typ
 	switch b.Kind {
 	}
 	return false

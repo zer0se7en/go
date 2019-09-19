@@ -80,7 +80,7 @@ TEXT runtime·closefd(SB),NOSPLIT|NOFRAME,$0-12
 	MOVW	R2, ret+8(FP)
 	RET
 
-TEXT runtime·write(SB),NOSPLIT|NOFRAME,$0-28
+TEXT runtime·write1(SB),NOSPLIT|NOFRAME,$0-28
 	MOVD	fd+0(FP), R2
 	MOVD	p+8(FP), R3
 	MOVW	n+16(FP), R4
@@ -167,8 +167,8 @@ TEXT runtime·mincore(SB),NOSPLIT|NOFRAME,$0-28
 	MOVW	R2, ret+24(FP)
 	RET
 
-// func walltime() (sec int64, nsec int32)
-TEXT runtime·walltime(SB),NOSPLIT,$16
+// func walltime1() (sec int64, nsec int32)
+TEXT runtime·walltime1(SB),NOSPLIT,$16
 	MOVW	$0, R2 // CLOCK_REALTIME
 	MOVD	$tp-16(SP), R3
 	MOVW	$SYS_clock_gettime, R1
@@ -179,7 +179,7 @@ TEXT runtime·walltime(SB),NOSPLIT,$16
 	MOVW	R3, nsec+8(FP)
 	RET
 
-TEXT runtime·nanotime(SB),NOSPLIT,$16
+TEXT runtime·nanotime1(SB),NOSPLIT,$16
 	MOVW	$1, R2 // CLOCK_MONOTONIC
 	MOVD	$tp-16(SP), R3
 	MOVW	$SYS_clock_gettime, R1
@@ -220,6 +220,9 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$0-32
 	MOVD	ctx+24(FP), R4
 	MOVD	fn+0(FP), R5
 	BL	R5
+	RET
+
+TEXT runtime·sigreturn(SB),NOSPLIT,$0-0
 	RET
 
 TEXT runtime·sigtramp(SB),NOSPLIT,$64
@@ -445,4 +448,19 @@ TEXT runtime·sbrk0(SB),NOSPLIT|NOFRAME,$0-8
 	MOVW	$SYS_brk, R1
 	SYSCALL
 	MOVD	R2, ret+0(FP)
+	RET
+
+TEXT runtime·access(SB),$0-20
+	MOVD	$0, 2(R0) // unimplemented, only needed for android; declared in stubs_linux.go
+	MOVW	R0, ret+16(FP)
+	RET
+
+TEXT runtime·connect(SB),$0-28
+	MOVD	$0, 2(R0) // unimplemented, only needed for android; declared in stubs_linux.go
+	MOVW	R0, ret+24(FP)
+	RET
+
+TEXT runtime·socket(SB),$0-20
+	MOVD	$0, 2(R0) // unimplemented, only needed for android; declared in stubs_linux.go
+	MOVW	R0, ret+16(FP)
 	RET
