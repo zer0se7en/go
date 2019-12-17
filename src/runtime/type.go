@@ -14,6 +14,7 @@ import "unsafe"
 //	cmd/compile/internal/gc/reflect.go
 //	cmd/link/internal/ld/decodesym.go
 //	reflect/type.go
+//      internal/reflectlite/type.go
 type tflag uint8
 
 const (
@@ -26,13 +27,14 @@ const (
 // Needs to be in sync with ../cmd/link/internal/ld/decodesym.go:/^func.commonsize,
 // ../cmd/compile/internal/gc/reflect.go:/^func.dcommontype and
 // ../reflect/type.go:/^type.rtype.
+// ../internal/reflectlite/type.go:/^type.rtype.
 type _type struct {
 	size       uintptr
 	ptrdata    uintptr // size of memory prefix holding all pointers
 	hash       uint32
 	tflag      tflag
 	align      uint8
-	fieldalign uint8
+	fieldAlign uint8
 	kind       uint8
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
@@ -290,7 +292,7 @@ func (t *_type) textOff(off textOff) unsafe.Pointer {
 		for i := range md.textsectmap {
 			sectaddr := md.textsectmap[i].vaddr
 			sectlen := md.textsectmap[i].length
-			if uintptr(off) >= sectaddr && uintptr(off) <= sectaddr+sectlen {
+			if uintptr(off) >= sectaddr && uintptr(off) < sectaddr+sectlen {
 				res = md.textsectmap[i].baseaddr + uintptr(off) - uintptr(md.textsectmap[i].vaddr)
 				break
 			}

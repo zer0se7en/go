@@ -99,7 +99,7 @@ func marshalPublicKey(pub interface{}) (publicKeyBytes []byte, publicKeyAlgorith
 		publicKeyBytes = pub
 		publicKeyAlgorithm.Algorithm = oidPublicKeyEd25519
 	default:
-		return nil, pkix.AlgorithmIdentifier{}, errors.New("x509: only RSA and ECDSA public keys supported")
+		return nil, pkix.AlgorithmIdentifier{}, fmt.Errorf("x509: unsupported public key type: %T", pub)
 	}
 
 	return publicKeyBytes, publicKeyAlgorithm, nil
@@ -891,6 +891,11 @@ func checkSignature(algo SignatureAlgorithm, signed, signature []byte, publicKey
 		}
 		if dsaSig.R.Sign() <= 0 || dsaSig.S.Sign() <= 0 {
 			return errors.New("x509: DSA signature contained zero or negative values")
+		}
+		// According to FIPS 186-3, section 4.6, the hash must be truncated if it is longer
+		// than the key length, but crypto/dsa doesn't do it automatically.
+		if maxHashLen := pub.Q.BitLen() / 8; maxHashLen < len(signed) {
+			signed = signed[:maxHashLen]
 		}
 		if !dsa.Verify(pub, signed, dsaSig.R, dsaSig.S) {
 			return errors.New("x509: DSA verification failure")
@@ -2052,6 +2057,7 @@ var emptyASN1Subject = []byte{0x30, 0}
 //  - ExcludedURIDomains
 //  - ExtKeyUsage
 //  - ExtraExtensions
+//  - IPAddresses
 //  - IsCA
 //  - IssuingCertificateURL
 //  - KeyUsage
@@ -2250,12 +2256,15 @@ func (c *Certificate) CreateCRL(rand io.Reader, priv interface{}, revokedCerts [
 		return
 	}
 
-	h := hashFunc.New()
-	h.Write(tbsCertListContents)
-	digest := h.Sum(nil)
+	signed := tbsCertListContents
+	if hashFunc != 0 {
+		h := hashFunc.New()
+		h.Write(signed)
+		signed = h.Sum(nil)
+	}
 
 	var signature []byte
-	signature, err = key.Sign(rand, digest, hashFunc)
+	signature, err = key.Sign(rand, signed, hashFunc)
 	if err != nil {
 		return
 	}

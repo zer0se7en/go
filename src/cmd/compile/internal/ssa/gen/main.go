@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"runtime"
 	"runtime/pprof"
+	"runtime/trace"
 	"sort"
 	"strings"
 	"sync"
@@ -34,10 +35,13 @@ type arch struct {
 	regnames        []string
 	gpregmask       regMask
 	fpregmask       regMask
+	fp32regmask     regMask
+	fp64regmask     regMask
 	specialregmask  regMask
 	framepointerreg int8
 	linkreg         int8
 	generic         bool
+	imports         []string
 }
 
 type opData struct {
@@ -59,12 +63,15 @@ type opData struct {
 	usesScratch       bool   // this op requires scratch memory space
 	hasSideEffects    bool   // for "reasons", not to be eliminated.  E.g., atomic store, #19182.
 	zeroWidth         bool   // op never translates into any machine code. example: copy, which may sometimes translate to machine code, is not zero-width.
+	unsafePoint       bool   // this op is an unsafe point, i.e. not safe for async preemption
 	symEffect         string // effect this op has on symbol in aux
 	scale             uint8  // amd64/386 indexed load scale
 }
 
 type blockData struct {
-	name string
+	name     string // the suffix for this block ("EQ", "LT", etc.)
+	controls int    // the number of control values this type of block requires
+	auxint   string // the type of the AuxInt value, if any
 }
 
 type regInfo struct {
@@ -99,6 +106,7 @@ var archs []arch
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to `file`")
 var memprofile = flag.String("memprofile", "", "write memory profile to `file`")
+var tracefile = flag.String("trace", "", "write trace to `file`")
 
 func main() {
 	flag.Parse()
@@ -113,6 +121,23 @@ func main() {
 		}
 		defer pprof.StopCPUProfile()
 	}
+	if *tracefile != "" {
+		f, err := os.Create(*tracefile)
+		if err != nil {
+			log.Fatalf("failed to create trace output file: %v", err)
+		}
+		defer func() {
+			if err := f.Close(); err != nil {
+				log.Fatalf("failed to close trace file: %v", err)
+			}
+		}()
+
+		if err := trace.Start(f); err != nil {
+			log.Fatalf("failed to start trace: %v", err)
+		}
+		defer trace.Stop()
+	}
+
 	sort.Sort(ArchsByName(archs))
 
 	// The generate tasks are run concurrently, since they are CPU-intensive
@@ -195,6 +220,21 @@ func genOp() {
 	}
 	fmt.Fprintln(w, "}")
 	fmt.Fprintln(w, "func (k BlockKind) String() string {return blockString[k]}")
+
+	// generate block kind auxint method
+	fmt.Fprintln(w, "func (k BlockKind) AuxIntType() string {")
+	fmt.Fprintln(w, "switch k {")
+	for _, a := range archs {
+		for _, b := range a.blocks {
+			if b.auxint == "" {
+				continue
+			}
+			fmt.Fprintf(w, "case Block%s%s: return \"%s\"\n", a.Name(), b.name, b.auxint)
+		}
+	}
+	fmt.Fprintln(w, "}")
+	fmt.Fprintln(w, "return \"\"")
+	fmt.Fprintln(w, "}")
 
 	// generate Op* declarations
 	fmt.Fprintln(w, "const (")
@@ -286,6 +326,9 @@ func genOp() {
 			if v.zeroWidth {
 				fmt.Fprintln(w, "zeroWidth: true,")
 			}
+			if v.unsafePoint {
+				fmt.Fprintln(w, "unsafePoint: true,")
+			}
 			needEffect := strings.HasPrefix(v.aux, "Sym")
 			if v.symEffect != "" {
 				if !needEffect {
@@ -362,6 +405,8 @@ func genOp() {
 
 	fmt.Fprintln(w, "func (o Op) SymEffect() SymEffect { return opcodeTable[o].symEffect }")
 	fmt.Fprintln(w, "func (o Op) IsCall() bool { return opcodeTable[o].call }")
+	fmt.Fprintln(w, "func (o Op) HasSideEffects() bool { return opcodeTable[o].hasSideEffects }")
+	fmt.Fprintln(w, "func (o Op) UnsafePoint() bool { return opcodeTable[o].unsafePoint }")
 
 	// generate registers
 	for _, a := range archs {
@@ -400,6 +445,12 @@ func genOp() {
 		fmt.Fprintln(w, "}")
 		fmt.Fprintf(w, "var gpRegMask%s = regMask(%d)\n", a.name, a.gpregmask)
 		fmt.Fprintf(w, "var fpRegMask%s = regMask(%d)\n", a.name, a.fpregmask)
+		if a.fp32regmask != 0 {
+			fmt.Fprintf(w, "var fp32RegMask%s = regMask(%d)\n", a.name, a.fp32regmask)
+		}
+		if a.fp64regmask != 0 {
+			fmt.Fprintf(w, "var fp64RegMask%s = regMask(%d)\n", a.name, a.fp64regmask)
+		}
 		fmt.Fprintf(w, "var specialRegMask%s = regMask(%d)\n", a.name, a.specialregmask)
 		fmt.Fprintf(w, "var framepointerReg%s = int8(%d)\n", a.name, a.framepointerreg)
 		fmt.Fprintf(w, "var linkReg%s = int8(%d)\n", a.name, a.linkreg)

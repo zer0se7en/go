@@ -21,6 +21,7 @@
 #define SYS_rt_sigaction	13
 #define SYS_rt_sigprocmask	14
 #define SYS_rt_sigreturn	15
+#define SYS_pipe		22
 #define SYS_sched_yield 	24
 #define SYS_mincore		27
 #define SYS_madvise		28
@@ -32,8 +33,10 @@
 #define SYS_clone		56
 #define SYS_exit		60
 #define SYS_kill		62
+#define SYS_uname		63
 #define SYS_fcntl		72
 #define SYS_sigaltstack 	131
+#define SYS_mlock		149
 #define SYS_arch_prctl		158
 #define SYS_gettid		186
 #define SYS_futex		202
@@ -46,6 +49,7 @@
 #define SYS_faccessat		269
 #define SYS_epoll_pwait		281
 #define SYS_epoll_create1	291
+#define SYS_pipe2		293
 
 TEXT runtime·exit(SB),NOSPLIT,$0-4
 	MOVL	code+0(FP), DI
@@ -95,9 +99,6 @@ TEXT runtime·write1(SB),NOSPLIT,$0-28
 	MOVL	n+16(FP), DX
 	MOVL	$SYS_write, AX
 	SYSCALL
-	CMPQ	AX, $0xfffffffffffff001
-	JLS	2(PC)
-	MOVL	$-1, AX
 	MOVL	AX, ret+24(FP)
 	RET
 
@@ -107,10 +108,24 @@ TEXT runtime·read(SB),NOSPLIT,$0-28
 	MOVL	n+16(FP), DX
 	MOVL	$SYS_read, AX
 	SYSCALL
-	CMPQ	AX, $0xfffffffffffff001
-	JLS	2(PC)
-	MOVL	$-1, AX
 	MOVL	AX, ret+24(FP)
+	RET
+
+// func pipe() (r, w int32, errno int32)
+TEXT runtime·pipe(SB),NOSPLIT,$0-12
+	LEAQ	r+0(FP), DI
+	MOVL	$SYS_pipe, AX
+	SYSCALL
+	MOVL	AX, errno+8(FP)
+	RET
+
+// func pipe2(flags int32) (r, w int32, errno int32)
+TEXT runtime·pipe2(SB),NOSPLIT,$0-20
+	LEAQ	r+8(FP), DI
+	MOVL	flags+0(FP), SI
+	MOVL	$SYS_pipe2, AX
+	SYSCALL
+	MOVL	AX, errno+16(FP)
 	RET
 
 TEXT runtime·usleep(SB),NOSPLIT,$16
@@ -155,6 +170,20 @@ TEXT runtime·raiseproc(SB),NOSPLIT,$0
 	MOVL	AX, DI	// arg 1 pid
 	MOVL	sig+0(FP), SI	// arg 2
 	MOVL	$SYS_kill, AX
+	SYSCALL
+	RET
+
+TEXT ·getpid(SB),NOSPLIT,$0-8
+	MOVL	$SYS_getpid, AX
+	SYSCALL
+	MOVQ	AX, ret+0(FP)
+	RET
+
+TEXT ·tgkill(SB),NOSPLIT,$0
+	MOVQ	tgid+0(FP), DI
+	MOVQ	tid+8(FP), SI
+	MOVQ	sig+16(FP), DX
+	MOVL	$SYS_tgkill, AX
 	SYSCALL
 	RET
 
@@ -682,6 +711,20 @@ TEXT runtime·closeonexec(SB),NOSPLIT,$0
 	SYSCALL
 	RET
 
+// func runtime·setNonblock(int32 fd)
+TEXT runtime·setNonblock(SB),NOSPLIT,$0-4
+	MOVL    fd+0(FP), DI  // fd
+	MOVQ    $3, SI  // F_GETFL
+	MOVQ    $0, DX
+	MOVL	$SYS_fcntl, AX
+	SYSCALL
+	MOVL	fd+0(FP), DI // fd
+	MOVQ	$4, SI // F_SETFL
+	MOVQ	$0x800, DX // O_NONBLOCK
+	ORL	AX, DX
+	MOVL	$SYS_fcntl, AX
+	SYSCALL
+	RET
 
 // int access(const char *name, int mode)
 TEXT runtime·access(SB),NOSPLIT,$0
@@ -722,4 +765,21 @@ TEXT runtime·sbrk0(SB),NOSPLIT,$0-8
 	MOVL	$SYS_brk, AX
 	SYSCALL
 	MOVQ	AX, ret+0(FP)
+	RET
+
+// func uname(utsname *new_utsname) int
+TEXT ·uname(SB),NOSPLIT,$0-16
+	MOVQ    utsname+0(FP), DI
+	MOVL    $SYS_uname, AX
+	SYSCALL
+	MOVQ	AX, ret+8(FP)
+	RET
+
+// func mlock(addr, len uintptr) int
+TEXT ·mlock(SB),NOSPLIT,$0-24
+	MOVQ    addr+0(FP), DI
+	MOVQ    len+8(FP), SI
+	MOVL    $SYS_mlock, AX
+	SYSCALL
+	MOVQ	AX, ret+16(FP)
 	RET

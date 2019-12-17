@@ -59,6 +59,23 @@ var Register = map[string]int16{
 	"F14": REG_F14,
 	"F15": REG_F15,
 
+	"F16": REG_F16,
+	"F17": REG_F17,
+	"F18": REG_F18,
+	"F19": REG_F19,
+	"F20": REG_F20,
+	"F21": REG_F21,
+	"F22": REG_F22,
+	"F23": REG_F23,
+	"F24": REG_F24,
+	"F25": REG_F25,
+	"F26": REG_F26,
+	"F27": REG_F27,
+	"F28": REG_F28,
+	"F29": REG_F29,
+	"F30": REG_F30,
+	"F31": REG_F31,
+
 	"PC_B": REG_PC_B,
 }
 
@@ -112,6 +129,7 @@ var (
 	morestackNoCtxt *obj.LSym
 	gcWriteBarrier  *obj.LSym
 	sigpanic        *obj.LSym
+	sigpanic0       *obj.LSym
 	deferreturn     *obj.LSym
 	jmpdefer        *obj.LSym
 )
@@ -126,6 +144,7 @@ func instinit(ctxt *obj.Link) {
 	morestackNoCtxt = ctxt.Lookup("runtime.morestack_noctxt")
 	gcWriteBarrier = ctxt.Lookup("runtime.gcWriteBarrier")
 	sigpanic = ctxt.LookupABI("runtime.sigpanic", obj.ABIInternal)
+	sigpanic0 = ctxt.LookupABI("runtime.sigpanic", 0) // sigpanic called from assembly, which has ABI0
 	deferreturn = ctxt.LookupABI("runtime.deferreturn", obj.ABIInternal)
 	// jmpdefer is defined in assembly as ABI0, but what we're
 	// looking for is the *call* to jmpdefer from the Go function
@@ -474,7 +493,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			}
 
 			// return value of call is on the top of the stack, indicating whether to unwind the WebAssembly stack
-			if call.As == ACALLNORESUME && call.To.Sym != sigpanic { // sigpanic unwinds the stack, but it never resumes
+			if call.As == ACALLNORESUME && call.To.Sym != sigpanic && call.To.Sym != sigpanic0 { // sigpanic unwinds the stack, but it never resumes
 				// trying to unwind WebAssembly stack but call has no resume point, terminate with error
 				p = appendp(p, AIf)
 				p = appendp(p, obj.AUNDEF)
@@ -841,7 +860,7 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		}
 
 		regs := []int16{REG_SP}
-		for reg := int16(REG_R0); reg <= REG_F15; reg++ {
+		for reg := int16(REG_R0); reg <= REG_F31; reg++ {
 			if regUsed[reg-MINREG] {
 				regs = append(regs, reg)
 			}
@@ -1022,6 +1041,11 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			}
 			writeSleb128(w, p.From.Offset)
 
+		case AF32Const:
+			b := make([]byte, 4)
+			binary.LittleEndian.PutUint32(b, math.Float32bits(float32(p.From.Val.(float64))))
+			w.Write(b)
+
 		case AF64Const:
 			b := make([]byte, 8)
 			binary.LittleEndian.PutUint64(b, math.Float64bits(p.From.Val.(float64)))
@@ -1106,6 +1130,8 @@ func regType(reg int16) valueType {
 	case reg >= REG_R0 && reg <= REG_R15:
 		return i64
 	case reg >= REG_F0 && reg <= REG_F15:
+		return f32
+	case reg >= REG_F16 && reg <= REG_F31:
 		return f64
 	default:
 		panic("invalid register")
@@ -1128,6 +1154,10 @@ func align(as obj.As) uint64 {
 }
 
 func writeUleb128(w io.ByteWriter, v uint64) {
+	if v < 128 {
+		w.WriteByte(uint8(v))
+		return
+	}
 	more := true
 	for more {
 		c := uint8(v & 0x7f)
