@@ -1274,6 +1274,16 @@ func (s *state) stmt(n *Node) {
 		s.assign(n.Left, r, deref, skip)
 
 	case OIF:
+		if Isconst(n.Left, CTBOOL) {
+			s.stmtList(n.Left.Ninit)
+			if n.Left.Bool() {
+				s.stmtList(n.Nbody)
+			} else {
+				s.stmtList(n.Rlist)
+			}
+			break
+		}
+
 		bEnd := s.f.NewBlock(ssa.BlockPlain)
 		var likely int8
 		if n.Likely() {
@@ -1717,14 +1727,6 @@ var opToSSA = map[opAndType]ssa.Op{
 	opAndType{OLT, TFLOAT64}: ssa.OpLess64F,
 	opAndType{OLT, TFLOAT32}: ssa.OpLess32F,
 
-	opAndType{OGT, TINT8}:    ssa.OpGreater8,
-	opAndType{OGT, TUINT8}:   ssa.OpGreater8U,
-	opAndType{OGT, TINT16}:   ssa.OpGreater16,
-	opAndType{OGT, TUINT16}:  ssa.OpGreater16U,
-	opAndType{OGT, TINT32}:   ssa.OpGreater32,
-	opAndType{OGT, TUINT32}:  ssa.OpGreater32U,
-	opAndType{OGT, TINT64}:   ssa.OpGreater64,
-	opAndType{OGT, TUINT64}:  ssa.OpGreater64U,
 	opAndType{OGT, TFLOAT64}: ssa.OpGreater64F,
 	opAndType{OGT, TFLOAT32}: ssa.OpGreater32F,
 
@@ -1739,14 +1741,6 @@ var opToSSA = map[opAndType]ssa.Op{
 	opAndType{OLE, TFLOAT64}: ssa.OpLeq64F,
 	opAndType{OLE, TFLOAT32}: ssa.OpLeq32F,
 
-	opAndType{OGE, TINT8}:    ssa.OpGeq8,
-	opAndType{OGE, TUINT8}:   ssa.OpGeq8U,
-	opAndType{OGE, TINT16}:   ssa.OpGeq16,
-	opAndType{OGE, TUINT16}:  ssa.OpGeq16U,
-	opAndType{OGE, TINT32}:   ssa.OpGeq32,
-	opAndType{OGE, TUINT32}:  ssa.OpGeq32U,
-	opAndType{OGE, TINT64}:   ssa.OpGeq64,
-	opAndType{OGE, TUINT64}:  ssa.OpGeq64U,
 	opAndType{OGE, TFLOAT64}: ssa.OpGeq64F,
 	opAndType{OGE, TFLOAT32}: ssa.OpGeq32F,
 }
@@ -2219,7 +2213,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 					conv = conv1
 				}
 			}
-			if thearch.LinkArch.Family == sys.ARM64 || thearch.LinkArch.Family == sys.Wasm || s.softFloat {
+			if thearch.LinkArch.Family == sys.ARM64 || thearch.LinkArch.Family == sys.Wasm || thearch.LinkArch.Family == sys.S390X || s.softFloat {
 				if conv1, ok1 := uint64fpConvOpToSSA[twoTypes{s.concreteEtype(ft), s.concreteEtype(tt)}]; ok1 {
 					conv = conv1
 				}
@@ -2339,7 +2333,16 @@ func (s *state) expr(n *Node) *ssa.Value {
 		if n.Left.Type.IsFloat() {
 			return s.newValueOrSfCall2(s.ssaOp(n.Op, n.Left.Type), types.Types[TBOOL], a, b)
 		}
-		return s.newValue2(s.ssaOp(n.Op, n.Left.Type), types.Types[TBOOL], a, b)
+
+		// Integer: convert OGE and OGT into OLE and OLT.
+		op := n.Op
+		switch op {
+		case OGE:
+			op, a, b = OLE, b, a
+		case OGT:
+			op, a, b = OLT, b, a
+		}
+		return s.newValue2(s.ssaOp(op, n.Left.Type), types.Types[TBOOL], a, b)
 	case OMUL:
 		a := s.expr(n.Left)
 		b := s.expr(n.Right)
@@ -2453,7 +2456,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 		b := s.expr(n.Right)
 		bt := b.Type
 		if bt.IsSigned() {
-			cmp := s.newValue2(s.ssaOp(OGE, bt), types.Types[TBOOL], b, s.zeroVal(bt))
+			cmp := s.newValue2(s.ssaOp(OLE, bt), types.Types[TBOOL], s.zeroVal(bt), b)
 			s.check(cmp, panicshift)
 			bt = bt.ToUnsigned()
 		}
@@ -2603,7 +2606,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 					return s.newValue0(ssa.OpUnknown, n.Type)
 				}
 				len := s.constInt(types.Types[TINT], bound)
-				i = s.boundsCheck(i, len, ssa.BoundsIndex, n.Bounded())
+				s.boundsCheck(i, len, ssa.BoundsIndex, n.Bounded()) // checks i == 0
 				return s.newValue1I(ssa.OpArraySelect, n.Type, 0, a)
 			}
 			p := s.addr(n, false)
@@ -2789,7 +2792,7 @@ func (s *state) append(n *Node, inplace bool) *ssa.Value {
 	c := s.newValue1(ssa.OpSliceCap, types.Types[TINT], slice)
 	nl := s.newValue2(s.ssaOp(OADD, types.Types[TINT]), types.Types[TINT], l, s.constInt(types.Types[TINT], nargs))
 
-	cmp := s.newValue2(s.ssaOp(OGT, types.Types[TUINT]), types.Types[TBOOL], nl, c)
+	cmp := s.newValue2(s.ssaOp(OLT, types.Types[TUINT]), types.Types[TBOOL], c, nl)
 	s.vars[&ptrVar] = p
 
 	if !inplace {
@@ -3006,7 +3009,7 @@ func (s *state) assign(left *Node, right *ssa.Value, deref bool, skip skipMask) 
 			}
 			// Rewrite to a = [1]{v}
 			len := s.constInt(types.Types[TINT], 1)
-			i = s.boundsCheck(i, len, ssa.BoundsIndex, false)
+			s.boundsCheck(i, len, ssa.BoundsIndex, false) // checks i == 0
 			v := s.newValue1(ssa.OpArrayMake1, t, right)
 			s.assign(left.Left, v, false, 0)
 			return
@@ -3213,7 +3216,7 @@ func init() {
 	var p4 []*sys.Arch
 	var p8 []*sys.Arch
 	var lwatomics []*sys.Arch
-	for _, a := range sys.Archs {
+	for _, a := range &sys.Archs {
 		all = append(all, a)
 		if a.PtrSize == 4 {
 			p4 = append(p4, a)
@@ -3276,7 +3279,7 @@ func init() {
 			}
 			return s.newValue2(ssa.OpMul64uover, types.NewTuple(types.Types[TUINT], types.Types[TUINT]), args[0], args[1])
 		},
-		sys.AMD64, sys.I386)
+		sys.AMD64, sys.I386, sys.MIPS64)
 	add("runtime", "KeepAlive",
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
 			data := s.newValue1(ssa.OpIData, s.f.Config.Types.BytePtr, args[0])
@@ -3338,7 +3341,7 @@ func init() {
 			s.vars[&memVar] = s.newValue1(ssa.OpSelect1, types.TypeMem, v)
 			return s.newValue1(ssa.OpSelect0, types.Types[TUINT8], v)
 		},
-		sys.AMD64, sys.ARM64, sys.S390X, sys.MIPS, sys.MIPS64, sys.PPC64)
+		sys.AMD64, sys.ARM64, sys.MIPS, sys.MIPS64, sys.PPC64, sys.RISCV64, sys.S390X)
 	addF("runtime/internal/atomic", "Load64",
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
 			v := s.newValue2(ssa.OpAtomicLoad64, types.NewTuple(types.Types[TUINT64], types.TypeMem), args[0], s.mem())
@@ -3372,7 +3375,7 @@ func init() {
 			s.vars[&memVar] = s.newValue3(ssa.OpAtomicStore8, types.TypeMem, args[0], args[1], s.mem())
 			return nil
 		},
-		sys.AMD64, sys.ARM64, sys.S390X, sys.MIPS, sys.MIPS64, sys.PPC64)
+		sys.AMD64, sys.ARM64, sys.MIPS, sys.MIPS64, sys.PPC64, sys.RISCV64, sys.S390X)
 	addF("runtime/internal/atomic", "Store64",
 		func(s *state, n *Node, args []*ssa.Value) *ssa.Value {
 			s.vars[&memVar] = s.newValue3(ssa.OpAtomicStore64, types.TypeMem, args[0], args[1], s.mem())
@@ -4778,6 +4781,24 @@ func (s *state) boundsCheck(idx, len *ssa.Value, kind ssa.BoundsKind, bounded bo
 	if bounded || Debug['B'] != 0 {
 		// If bounded or bounds checking is flag-disabled, then no check necessary,
 		// just return the extended index.
+		//
+		// Here, bounded == true if the compiler generated the index itself,
+		// such as in the expansion of a slice initializer. These indexes are
+		// compiler-generated, not Go program variables, so they cannot be
+		// attacker-controlled, so we can omit Spectre masking as well.
+		//
+		// Note that we do not want to omit Spectre masking in code like:
+		//
+		//	if 0 <= i && i < len(x) {
+		//		use(x[i])
+		//	}
+		//
+		// Lucky for us, bounded==false for that code.
+		// In that case (handled below), we emit a bound check (and Spectre mask)
+		// and then the prove pass will remove the bounds check.
+		// In theory the prove pass could potentially remove certain
+		// Spectre masks, but it's very delicate and probably better
+		// to be conservative and leave them all in.
 		return idx
 	}
 
@@ -4828,6 +4849,15 @@ func (s *state) boundsCheck(idx, len *ssa.Value, kind ssa.BoundsKind, bounded bo
 		s.endBlock().SetControl(mem)
 	}
 	s.startBlock(bNext)
+
+	// In Spectre index mode, apply an appropriate mask to avoid speculative out-of-bounds accesses.
+	if spectreIndex {
+		op := ssa.OpSpectreIndex
+		if kind != ssa.BoundsIndex && kind != ssa.BoundsIndexU {
+			op = ssa.OpSpectreSliceIndex
+		}
+		idx = s.newValue2(op, types.Types[TINT], idx, len)
+	}
 
 	return idx
 }
@@ -5166,12 +5196,12 @@ func (s *state) slice(v, i, j, k *ssa.Value, bounded bool) (p, l, c *ssa.Value) 
 }
 
 type u642fcvtTab struct {
-	geq, cvt2F, and, rsh, or, add ssa.Op
+	leq, cvt2F, and, rsh, or, add ssa.Op
 	one                           func(*state, *types.Type, int64) *ssa.Value
 }
 
 var u64_f64 = u642fcvtTab{
-	geq:   ssa.OpGeq64,
+	leq:   ssa.OpLeq64,
 	cvt2F: ssa.OpCvt64to64F,
 	and:   ssa.OpAnd64,
 	rsh:   ssa.OpRsh64Ux64,
@@ -5181,7 +5211,7 @@ var u64_f64 = u642fcvtTab{
 }
 
 var u64_f32 = u642fcvtTab{
-	geq:   ssa.OpGeq64,
+	leq:   ssa.OpLeq64,
 	cvt2F: ssa.OpCvt64to32F,
 	and:   ssa.OpAnd64,
 	rsh:   ssa.OpRsh64Ux64,
@@ -5224,7 +5254,7 @@ func (s *state) uint64Tofloat(cvttab *u642fcvtTab, n *Node, x *ssa.Value, ft, tt
 	// equal to 10000000001; that rounds up, and the 1 cannot
 	// be lost else it would round down if the LSB of the
 	// candidate mantissa is 0.
-	cmp := s.newValue2(cvttab.geq, types.Types[TBOOL], x, s.zeroVal(ft))
+	cmp := s.newValue2(cvttab.leq, types.Types[TBOOL], s.zeroVal(ft), x)
 	b := s.endBlock()
 	b.Kind = ssa.BlockIf
 	b.SetControl(cmp)
@@ -5285,7 +5315,7 @@ func (s *state) uint32Tofloat(cvttab *u322fcvtTab, n *Node, x *ssa.Value, ft, tt
 	// } else {
 	// 	result = floatY(float64(x) + (1<<32))
 	// }
-	cmp := s.newValue2(ssa.OpGeq32, types.Types[TBOOL], x, s.zeroVal(ft))
+	cmp := s.newValue2(ssa.OpLeq32, types.Types[TBOOL], s.zeroVal(ft), x)
 	b := s.endBlock()
 	b.Kind = ssa.BlockIf
 	b.SetControl(cmp)

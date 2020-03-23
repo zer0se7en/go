@@ -947,7 +947,7 @@ func TestOnlyWriteTimeout(t *testing.T) {
 
 	c := ts.Client()
 
-	errc := make(chan error)
+	errc := make(chan error, 1)
 	go func() {
 		res, err := c.Get(ts.URL)
 		if err != nil {
@@ -4135,10 +4135,19 @@ func TestServerConnState(t *testing.T) {
 
 		doRequests()
 
-		timer := time.NewTimer(5 * time.Second)
+		stateDelay := 5 * time.Second
+		if deadline, ok := t.Deadline(); ok {
+			// Allow an arbitrarily long delay.
+			// This test was observed to be flaky on the darwin-arm64-corellium builder,
+			// so we're increasing the deadline to see if it starts passing.
+			// See https://golang.org/issue/37322.
+			const arbitraryCleanupMargin = 1 * time.Second
+			stateDelay = time.Until(deadline) - arbitraryCleanupMargin
+		}
+		timer := time.NewTimer(stateDelay)
 		select {
 		case <-timer.C:
-			t.Errorf("Timed out waiting for connection to change state.")
+			t.Errorf("Timed out after %v waiting for connection to change state.", stateDelay)
 		case <-complete:
 			timer.Stop()
 		}
@@ -5167,8 +5176,14 @@ func BenchmarkClient(b *testing.B) {
 	}
 
 	done := make(chan error)
+	stop := make(chan struct{})
+	defer close(stop)
 	go func() {
-		done <- cmd.Wait()
+		select {
+		case <-stop:
+			return
+		case done <- cmd.Wait():
+		}
 	}()
 
 	// Do b.N requests to the server.

@@ -216,7 +216,7 @@ func send(ireq *Request, rt RoundTripper, deadline time.Time) (resp *Response, d
 
 	if req.RequestURI != "" {
 		req.closeBody()
-		return nil, alwaysFalse, errors.New("http: Request.RequestURI can't be set in client requests.")
+		return nil, alwaysFalse, errors.New("http: Request.RequestURI can't be set in client requests")
 	}
 
 	// forkReq forks req into a shallow clone of ireq the first
@@ -264,6 +264,12 @@ func send(ireq *Request, rt RoundTripper, deadline time.Time) (resp *Response, d
 			}
 		}
 		return nil, didTimeout, err
+	}
+	if resp == nil {
+		return nil, didTimeout, fmt.Errorf("http: RoundTripper implementation (%T) returned a nil *Response with a nil error", rt)
+	}
+	if resp.Body == nil {
+		return nil, didTimeout, fmt.Errorf("http: RoundTripper implementation (%T) returned a *Response with a nil Body", rt)
 	}
 	if !deadline.IsZero() {
 		resp.Body = &cancelTimerBody{

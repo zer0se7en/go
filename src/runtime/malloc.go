@@ -468,8 +468,7 @@ func mallocinit() {
 
 	// Initialize the heap.
 	mheap_.init()
-	_g_ := getg()
-	_g_.m.mcache = allocmcache()
+	mcache0 = allocmcache()
 
 	// Create initial arena growth hints.
 	if sys.PtrSize == 8 {
@@ -953,7 +952,19 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 
 	shouldhelpgc := false
 	dataSize := size
-	c := gomcache()
+	var c *mcache
+	if mp.p != 0 {
+		c = mp.p.ptr().mcache
+	} else {
+		// We will be called without a P while bootstrapping,
+		// in which case we use mcache0, which is set in mallocinit.
+		// mcache0 is cleared when bootstrapping is complete,
+		// by procresize.
+		c = mcache0
+		if c == nil {
+			throw("malloc called with no P")
+		}
+	}
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.ptrdata == 0
 	if size <= maxSmallSize {
@@ -1024,9 +1035,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 		} else {
 			var sizeclass uint8
 			if size <= smallSizeMax-8 {
-				sizeclass = size_to_class8[(size+smallSizeDiv-1)/smallSizeDiv]
+				sizeclass = size_to_class8[divRoundUp(size, smallSizeDiv)]
 			} else {
-				sizeclass = size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv]
+				sizeclass = size_to_class128[divRoundUp(size-smallSizeMax, largeSizeDiv)]
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
@@ -1193,7 +1204,7 @@ func reflect_unsafe_NewArray(typ *_type, n int) unsafe.Pointer {
 }
 
 func profilealloc(mp *m, x unsafe.Pointer, size uintptr) {
-	mp.mcache.next_sample = nextSample()
+	mp.p.ptr().mcache.next_sample = nextSample()
 	mProf_Malloc(x, size)
 }
 

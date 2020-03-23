@@ -106,12 +106,13 @@ func init() {
 	callerSave := gpMask | fpMask | regNamed["g"]
 
 	var (
-		gpstore = regInfo{inputs: []regMask{gpspsbMask, gpspMask, 0}} // SB in first input so we can load from a global, but not in second to avoid using SB as a temporary register
-		gp01    = regInfo{outputs: []regMask{gpMask}}
-		gp11    = regInfo{inputs: []regMask{gpMask}, outputs: []regMask{gpMask}}
-		gp21    = regInfo{inputs: []regMask{gpMask, gpMask}, outputs: []regMask{gpMask}}
-		gpload  = regInfo{inputs: []regMask{gpspsbMask, 0}, outputs: []regMask{gpMask}}
-		gp11sb  = regInfo{inputs: []regMask{gpspsbMask}, outputs: []regMask{gpMask}}
+		gpstore  = regInfo{inputs: []regMask{gpspsbMask, gpspMask, 0}} // SB in first input so we can load from a global, but not in second to avoid using SB as a temporary register
+		gpstore0 = regInfo{inputs: []regMask{gpspsbMask}}
+		gp01     = regInfo{outputs: []regMask{gpMask}}
+		gp11     = regInfo{inputs: []regMask{gpMask}, outputs: []regMask{gpMask}}
+		gp21     = regInfo{inputs: []regMask{gpMask, gpMask}, outputs: []regMask{gpMask}}
+		gpload   = regInfo{inputs: []regMask{gpspsbMask, 0}, outputs: []regMask{gpMask}}
+		gp11sb   = regInfo{inputs: []regMask{gpspsbMask}, outputs: []regMask{gpMask}}
 
 		fp11    = regInfo{inputs: []regMask{fpMask}, outputs: []regMask{fpMask}}
 		fp21    = regInfo{inputs: []regMask{fpMask, fpMask}, outputs: []regMask{fpMask}}
@@ -129,7 +130,11 @@ func init() {
 	RISCV64ops := []opData{
 		{name: "ADD", argLength: 2, reg: gp21, asm: "ADD", commutative: true}, // arg0 + arg1
 		{name: "ADDI", argLength: 1, reg: gp11sb, asm: "ADDI", aux: "Int64"},  // arg0 + auxint
+		{name: "ADDIW", argLength: 1, reg: gp11, asm: "ADDIW", aux: "Int64"},  // 32 low bits of arg0 + auxint, sign extended to 64 bits
+		{name: "NEG", argLength: 1, reg: gp11, asm: "NEG"},                    // -arg0
+		{name: "NEGW", argLength: 1, reg: gp11, asm: "NEGW"},                  // -arg0 of 32 bits, sign extended to 64 bits
 		{name: "SUB", argLength: 2, reg: gp21, asm: "SUB"},                    // arg0 - arg1
+		{name: "SUBW", argLength: 2, reg: gp21, asm: "SUBW"},                  // 32 low bits of arg 0 - 32 low bits of arg 1, sign extended to 64 bits
 
 		// M extension. H means high (i.e., it returns the top bits of
 		// the result). U means unsigned. W means word (i.e., 32-bit).
@@ -169,6 +174,12 @@ func init() {
 		{name: "MOVWstore", argLength: 3, reg: gpstore, asm: "MOVW", aux: "SymOff", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"}, // 32 bits
 		{name: "MOVDstore", argLength: 3, reg: gpstore, asm: "MOV", aux: "SymOff", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"},  // 64 bits
 
+		// Stores: store <size> of zero in arg0+auxint+aux; arg1=mem
+		{name: "MOVBstorezero", argLength: 2, reg: gpstore0, aux: "SymOff", asm: "MOVB", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"}, //  8 bits
+		{name: "MOVHstorezero", argLength: 2, reg: gpstore0, aux: "SymOff", asm: "MOVH", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"}, // 16 bits
+		{name: "MOVWstorezero", argLength: 2, reg: gpstore0, aux: "SymOff", asm: "MOVW", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"}, // 32 bits
+		{name: "MOVDstorezero", argLength: 2, reg: gpstore0, aux: "SymOff", asm: "MOV", typ: "Mem", faultOnNilArg0: true, symEffect: "Write"},  // 64 bits
+
 		// Shift ops
 		{name: "SLL", argLength: 2, reg: gp21, asm: "SLL"},                 // arg0 << aux1
 		{name: "SRA", argLength: 2, reg: gp21, asm: "SRA"},                 // arg0 >> aux1, signed
@@ -184,6 +195,7 @@ func init() {
 		{name: "ORI", argLength: 1, reg: gp11, asm: "ORI", aux: "Int64"},      // arg0 | auxint
 		{name: "AND", argLength: 2, reg: gp21, asm: "AND", commutative: true}, // arg0 & arg1
 		{name: "ANDI", argLength: 1, reg: gp11, asm: "ANDI", aux: "Int64"},    // arg0 & auxint
+		{name: "NOT", argLength: 1, reg: gp11, asm: "NOT"},                    // ^arg0
 
 		// Generate boolean values
 		{name: "SEQZ", argLength: 1, reg: gp11, asm: "SEQZ"},                 // arg0 == 0, result is 0 or 1
@@ -252,6 +264,15 @@ func init() {
 			faultOnNilArg0: true,
 			faultOnNilArg1: true,
 		},
+
+		// Atomic loads.
+		// load from arg0. arg1=mem.
+		// returns <value,memory> so they can be properly ordered with other loads.
+		{name: "LoweredAtomicLoad8", argLength: 2, reg: gpload, faultOnNilArg0: true},
+
+		// Atomic stores.
+		// store arg1 to arg0. arg2=mem. returns memory.
+		{name: "LoweredAtomicStore8", argLength: 3, reg: gpstore, faultOnNilArg0: true, hasSideEffects: true},
 
 		// Lowering pass-throughs
 		{name: "LoweredNilCheck", argLength: 2, faultOnNilArg0: true, nilCheck: true, reg: regInfo{inputs: []regMask{gpspMask}}}, // arg0=ptr,arg1=mem, returns void.  Faults if ptr is nil.

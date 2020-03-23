@@ -510,7 +510,6 @@ type m struct {
 	park          note
 	alllink       *m // on allm
 	schedlink     muintptr
-	mcache        *mcache
 	lockedg       guintptr
 	createstack   [32]uintptr // stack that created this thread.
 	lockedExt     uint32      // tracking for external LockOSThread
@@ -539,6 +538,10 @@ type m struct {
 	// signals. This is used to detect when a preemption is
 	// requested, but fails. Accessed atomically.
 	preemptGen uint32
+
+	// Whether this is a pending preemption signal on this M.
+	// Accessed atomically.
+	signalPending uint32
 
 	dlogPerM
 

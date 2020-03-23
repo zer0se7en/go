@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"internal/cpu"
 	"io"
-	"math/big"
 	"net"
 	"strings"
 	"sync"
@@ -300,6 +299,8 @@ type ClientSessionCache interface {
 	Put(sessionKey string, cs *ClientSessionState)
 }
 
+//go:generate stringer -type=SignatureScheme,CurveID,ClientAuthType -output=common_string.go
+
 // SignatureScheme identifies a signature algorithm supported by TLS. See
 // RFC 8446, Section 4.2.3.
 type SignatureScheme uint16
@@ -548,7 +549,7 @@ type Config struct {
 	// server's certificate chain and host name.
 	// If InsecureSkipVerify is true, TLS accepts any certificate
 	// presented by the server and any host name in that certificate.
-	// In this mode, TLS is susceptible to man-in-the-middle attacks.
+	// In this mode, TLS is susceptible to machine-in-the-middle attacks.
 	// This should be used only for testing.
 	InsecureSkipVerify bool
 
@@ -1263,13 +1264,6 @@ func (c *lruSessionCache) Get(sessionKey string) (*ClientSessionState, bool) {
 	}
 	return nil, false
 }
-
-// TODO(jsing): Make these available to both crypto/x509 and crypto/tls.
-type dsaSignature struct {
-	R, S *big.Int
-}
-
-type ecdsaSignature dsaSignature
 
 var emptyConfig Config
 

@@ -166,14 +166,6 @@ func main() {
 	}
 }
 
-func toolPath(name string) string {
-	p := filepath.Join(os.Getenv("GOROOT"), "bin", "tool", name)
-	if _, err := os.Stat(p); err != nil {
-		log.Fatalf("didn't find binary at %s", p)
-	}
-	return p
-}
-
 // goTool reports the path of the go tool to use to run the tests.
 // If possible, use the same Go used to run run.go, otherwise
 // fallback to the go version found in the PATH.
@@ -201,9 +193,14 @@ func shardMatch(name string) bool {
 
 func goFiles(dir string) []string {
 	f, err := os.Open(dir)
-	check(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	dirnames, err := f.Readdirnames(-1)
-	check(err)
+	f.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 	names := []string{}
 	for _, name := range dirnames {
 		if !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".go") && shardMatch(name) {
@@ -260,12 +257,6 @@ func linkFile(runcmd runCmd, goname string, ldflags []string) (err error) {
 type skipError string
 
 func (s skipError) Error() string { return string(s) }
-
-func check(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
-}
 
 // test holds the state of a test.
 type test struct {
@@ -360,7 +351,9 @@ func goDirPackages(longdir string, singlefilepkgs bool) ([][]string, error) {
 	for _, file := range files {
 		name := file.Name()
 		pkgname, err := getPackageNameFromSource(filepath.Join(longdir, name))
-		check(err)
+		if err != nil {
+			log.Fatal(err)
+		}
 		i, ok := m[pkgname]
 		if singlefilepkgs || !ok {
 			i = len(pkgs)
@@ -466,7 +459,11 @@ func init() { checkShouldTest() }
 // or else the commands will rebuild any needed packages (like runtime)
 // over and over.
 func goGcflags() string {
-	return "-gcflags=" + os.Getenv("GO_GCFLAGS")
+	return "-gcflags=all=" + os.Getenv("GO_GCFLAGS")
+}
+
+func goGcflagsIsEmpty() bool {
+	return "" == os.Getenv("GO_GCFLAGS")
 }
 
 // run runs a test.
@@ -499,9 +496,7 @@ func (t *test) run() {
 		// skip first line
 		action = action[nl+1:]
 	}
-	if strings.HasPrefix(action, "//") {
-		action = action[2:]
-	}
+	action = strings.TrimPrefix(action, "//")
 
 	// Check for build constraints only up to the actual code.
 	pkgPos := strings.Index(t.src, "\npackage")
@@ -600,7 +595,9 @@ func (t *test) run() {
 	}
 
 	err = ioutil.WriteFile(filepath.Join(t.tempDir, t.gofile), srcBytes, 0644)
-	check(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// A few tests (of things like the environment) require these to be set.
 	if os.Getenv("GOOS") == "" {
@@ -674,7 +671,25 @@ func (t *test) run() {
 			}
 			// -S=2 forces outermost line numbers when disassembling inlined code.
 			cmdline := []string{"build", "-gcflags", "-S=2"}
-			cmdline = append(cmdline, flags...)
+
+			// Append flags, but don't override -gcflags=-S=2; add to it instead.
+			for i := 0; i < len(flags); i++ {
+				flag := flags[i]
+				switch {
+				case strings.HasPrefix(flag, "-gcflags="):
+					cmdline[2] += " " + strings.TrimPrefix(flag, "-gcflags=")
+				case strings.HasPrefix(flag, "--gcflags="):
+					cmdline[2] += " " + strings.TrimPrefix(flag, "--gcflags=")
+				case flag == "-gcflags", flag == "--gcflags":
+					i++
+					if i < len(flags) {
+						cmdline[2] += " " + flags[i]
+					}
+				default:
+					cmdline = append(cmdline, flag)
+				}
+			}
+
 			cmdline = append(cmdline, long)
 			cmd := exec.Command(goTool(), cmdline...)
 			cmd.Env = append(os.Environ(), env.Environ()...)
@@ -813,8 +828,10 @@ func (t *test) run() {
 			pflags = append(pflags, flags...)
 			if setpkgpaths {
 				fp := filepath.Join(longdir, gofiles[0])
-				pkgname, serr := getPackageNameFromSource(fp)
-				check(serr)
+				pkgname, err := getPackageNameFromSource(fp)
+				if err != nil {
+					log.Fatal(err)
+				}
 				pflags = append(pflags, "-p", pkgname)
 			}
 			_, err := compileInDir(runcmd, longdir, pflags, localImports, gofiles...)
@@ -966,13 +983,13 @@ func (t *test) run() {
 		longdirgofile := filepath.Join(filepath.Join(cwd, t.dir), t.gofile)
 		cmd = append(cmd, flags...)
 		cmd = append(cmd, longdirgofile)
-		out, err := runcmd(cmd...)
+		_, err := runcmd(cmd...)
 		if err != nil {
 			t.err = err
 			return
 		}
 		cmd = []string{"./a.exe"}
-		out, err = runcmd(append(cmd, args...)...)
+		out, err := runcmd(append(cmd, args...)...)
 		if err != nil {
 			t.err = err
 			return
@@ -989,7 +1006,7 @@ func (t *test) run() {
 		useTmp = false
 		var out []byte
 		var err error
-		if len(flags)+len(args) == 0 && goGcflags() == "" && !*linkshared {
+		if len(flags)+len(args) == 0 && goGcflagsIsEmpty() && !*linkshared && goarch == runtime.GOARCH && goos == runtime.GOOS {
 			// If we're not using special go command flags,
 			// skip all the go command machinery.
 			// This avoids any time the go command would
@@ -1128,7 +1145,9 @@ func (t *test) String() string {
 func (t *test) makeTempDir() {
 	var err error
 	t.tempDir, err = ioutil.TempDir("", "")
-	check(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *keep {
 		log.Printf("Temporary directory is %s", t.tempDir)
 	}

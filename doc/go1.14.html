@@ -14,24 +14,24 @@ Do not send CLs removing the interior tags from such phrases.
   main ul li { margin: 0.5em 0; }
 </style>
 
-<h2 id="introduction">DRAFT RELEASE NOTES — Introduction to Go 1.14</h2>
+<h2 id="introduction">Introduction to Go 1.14</h2>
 
 <p>
-  <strong>
-    Go 1.14 is not yet released. These are work-in-progress
-    release notes. Go 1.14 is expected to be released in February 2020.
-  </strong>
+  The latest Go release, version 1.14, arrives six months after <a href="go1.13">Go 1.13</a>.
+  Most of its changes are in the implementation of the toolchain, runtime, and libraries.
+  As always, the release maintains the Go 1 <a href="/doc/go1compat.html">promise of compatibility</a>.
+  We expect almost all Go programs to continue to compile and run as before.
 </p>
 
 <p>
-Module support in the <code>go</code> command is now ready for production use,
-and we encourage all users to migrate to Go modules for dependency management.
-If you are unable to migrate due to a problem in the Go toolchain,
-please ensure that the problem has an
-<a href="https://golang.org/issue?q=is%3Aissue+is%3Aopen+label%3Amodules">open issue</a>
-filed. (If the issue is not on the <code>Go1.15</code> milestone, please let us
-know why it prevents you from migrating so that we can prioritize it
-appropriately.)
+  Module support in the <code>go</code> command is now ready for production use,
+  and we encourage all users to <a href="https://blog.golang.org/migrating-to-go-modules">migrate to Go
+  modules for dependency management</a>. If you are unable to migrate due to a problem in the Go
+  toolchain, please ensure that the problem has an
+  <a href="https://golang.org/issue?q=is%3Aissue+is%3Aopen+label%3Amodules">open issue</a>
+  filed. (If the issue is not on the <code>Go1.15</code> milestone, please let us
+  know why it prevents you from migrating so that we can prioritize it
+  appropriately.)
 </p>
 
 <h2 id="language">Changes to the language</h2>
@@ -77,6 +77,18 @@ appropriately.)
   (Data Execution Prevention)</a> enabled.
 </p>
 
+<p><!-- CL 202439 -->
+  On Windows, creating a file
+  via <a href="/pkg/os#CreateFile"><code>os.OpenFile</code></a> with
+  the <a href="/pkg/os/#O_CREATE"><code>os.O_CREATE</code></a> flag, or
+  via <a href="/pkg/syscall#Open"><code>syscall.Open</code></a> with
+  the <a href="/pkg/syscall#O_CREAT"><code>syscall.O_CREAT</code></a>
+  flag, will now create the file as read-only if the
+  bit <code>0o200</code> (owner write permission) is not set in the
+  permission argument. This makes the behavior on Windows more like
+  that on Unix systems.
+</p>
+
 <h3 id="wasm">WebAssembly</h3>
 
 <p><!-- CL 203600 -->
@@ -108,7 +120,7 @@ appropriately.)
 <h3 id="freebsd">FreeBSD</h3>
 
 <p><!-- CL 199919 -->
-  Go now supports the 64-bit ARM architecture on FreeBSD (the
+  Go now supports the 64-bit ARM architecture on FreeBSD 12.0 or later (the
   <code>freebsd/arm64</code> port).
 </p>
 
@@ -343,8 +355,6 @@ appropriately.)
   visible changes.
 </p>
 
-<!-- TODO: Maybe CL 200439? -->
-
 <h2 id="compiler">Compiler</h2>
 
 <p><!-- CL 162237 -->
@@ -378,7 +388,7 @@ appropriately.)
 <p><!-- CL 204338 -->
   The compiler can now emit machine-readable logs of key optimizations
   using the <code>-json</code> flag, including inlining, escape
-  analysis, bounds-check elimination, and nil-check elimination
+  analysis, bounds-check elimination, and nil-check elimination.
 </p>
 
 <p><!-- CL 196959 -->
@@ -395,7 +405,7 @@ appropriately.)
 <p><!-- CL 202117 -->
   This release includes experimental support for compiler-inserted
   coverage instrumentation for fuzzing.
-  See <a href="https://golang.org/issue/14565">the issue</a> for more
+  See <a href="https://golang.org/issue/14565">issue 14565</a> for more
   details.
   This API may change in future releases.
 </p>
@@ -407,8 +417,22 @@ appropriately.)
 
 <h2 id="library">Core library</h2>
 
+<h3 id="hash/maphash">New byte sequence hashing package</h3>
+
+<p> <!-- golang.org/issue/28322, CL 186877 -->
+  Go 1.14 includes a new package,
+  <a href="/pkg/hash/maphash/"><code>hash/maphash</code></a>,
+  which provides hash functions on byte sequences.
+  These hash functions are intended to be used to implement hash tables or
+  other data structures that need to map arbitrary strings or byte
+  sequences to a uniform distribution on unsigned 64-bit integers.
+</p>
 <p>
-  All of the changes to the standard library are minor.
+  The hash functions are collision-resistant but not cryptographically secure.
+</p>
+<p>
+  The hash value of a given byte sequence is consistent within a
+  single process, but will be different in different processes.
 </p>
 
 <h3 id="minor_library_changes">Minor changes to the library</h3>
@@ -570,6 +594,13 @@ appropriately.)
       was never a documented feature. For proper escaping, see <a
       href="/pkg/encoding/json/#HTMLEscape"><code>HTMLEscape</code></a>.
     </p>
+
+    <p><!-- CL 195045 -->
+      <a href="/pkg/encoding/json/#Number"><code>Number</code></a> no longer
+      accepts invalid numbers, to follow the documented behavior more closely.
+      If a program needs to accept invalid numbers like the empty string,
+      consider wrapping the type with <a href="/pkg/encoding/json/#Unmarshaler"><code>Unmarshaler</code></a>.
+    </p>
   </dd>
 </dl><!-- encoding/json -->
 
@@ -604,24 +635,6 @@ appropriately.)
     </p>
   </dd>
 </dl><!-- go/doc -->
-
-<dl id="hash/maphash"><dt><a href="/pkg/hash/maphash/">hash/maphash</a></dt>
-  <dd>
-    <p><!-- CL 186877 -->
-      This new package provides hash functions on byte sequences.
-      These hash functions are intended to be used to implement hash tables or
-      other data structures that need to map arbitrary strings or byte
-      sequences to a uniform distribution of integers.
-    </p>
-    <p>
-      The hash functions are collision-resistant but not cryptographically secure.
-    </p>
-    <p>
-      The hash value of a given byte sequence is consistent within a
-      single process, but will be different in different processes.
-    </p>
-  </dd>
-</dl><!-- hash/maphash -->
 
 <dl id="io/ioutil"><dt><a href="/pkg/io/ioutil/">io/ioutil</a></dt>
   <dd>
@@ -757,6 +770,19 @@ appropriately.)
     </p>
   </dd>
 </dl><!-- net/textproto -->
+
+<dl id="net/url"><dt><a href="/pkg/net/url/">net/url</a></dt>
+  <dd>
+    <p><!-- CL 185117 -->
+      When parsing of a URL fails
+      (for example by <a href="/pkg/net/url/#Parse"><code>Parse</code></a>
+      or <a href="/pkg/net/url/#ParseRequestURI"><code>ParseRequestURI</code></a>),
+      the resulting <a href="/pkg/net/url/#Error.Error"><code>Error</code></a> message
+      will now quote the unparsable URL.
+      This provides clearer structure and consistency with other parsing errors.
+    </p>
+  </dd>
+</dl><!-- net/url -->
 
 <dl id="os/signal"><dt><a href="/pkg/os/signal/">os/signal</a></dt>
   <dd>
