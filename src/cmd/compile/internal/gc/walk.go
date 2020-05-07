@@ -1717,57 +1717,56 @@ func ascompatet(nl Nodes, nr *types.Type) []*Node {
 }
 
 // package all the arguments that match a ... T parameter into a []T.
-func mkdotargslice(typ *types.Type, args []*Node, init *Nodes, ddd *Node) *Node {
-	esc := uint16(EscUnknown)
-	if ddd != nil {
-		esc = ddd.Esc
-	}
+func mkdotargslice(typ *types.Type, args []*Node) *Node {
+	var n *Node
 	if len(args) == 0 {
-		n := nodnil()
+		n = nodnil()
 		n.Type = typ
-		return n
+	} else {
+		n = nod(OCOMPLIT, nil, typenod(typ))
+		n.List.Append(args...)
+		n.SetImplicit(true)
 	}
 
-	n := nod(OCOMPLIT, nil, typenod(typ))
-	if ddd != nil && prealloc[ddd] != nil {
-		prealloc[n] = prealloc[ddd] // temporary to use
-	}
-	n.List.Set(args)
-	n.Esc = esc
 	n = typecheck(n, ctxExpr)
 	if n.Type == nil {
 		Fatalf("mkdotargslice: typecheck failed")
 	}
-	n = walkexpr(n, init)
 	return n
+}
+
+// fixVariadicCall rewrites calls to variadic functions to use an
+// explicit ... argument if one is not already present.
+func fixVariadicCall(call *Node) {
+	fntype := call.Left.Type
+	if !fntype.IsVariadic() || call.IsDDD() {
+		return
+	}
+
+	vi := fntype.NumParams() - 1
+	vt := fntype.Params().Field(vi).Type
+
+	args := call.List.Slice()
+	extra := args[vi:]
+	slice := mkdotargslice(vt, extra)
+	for i := range extra {
+		extra[i] = nil // allow GC
+	}
+
+	call.List.Set(append(args[:vi], slice))
+	call.SetIsDDD(true)
 }
 
 func walkCall(n *Node, init *Nodes) {
 	if n.Rlist.Len() != 0 {
 		return // already walked
 	}
-	n.Left = walkexpr(n.Left, init)
-	walkexprlist(n.List.Slice(), init)
 
 	params := n.Left.Type.Params()
 	args := n.List.Slice()
-	// If there's a ... parameter (which is only valid as the final
-	// parameter) and this is not a ... call expression,
-	// then assign the remaining arguments as a slice.
-	if nf := params.NumFields(); nf > 0 {
-		if last := params.Field(nf - 1); last.IsDDD() && !n.IsDDD() {
-			// The callsite does not use a ..., but the called function is declared
-			// with a final argument that has a ... . Build the slice that we will
-			// pass as the ... argument.
-			tail := args[nf-1:]
-			slice := mkdotargslice(last.Type, tail, init, n.Right)
-			// Allow immediate GC.
-			for i := range tail {
-				tail[i] = nil
-			}
-			args = append(args[:nf-1], slice)
-		}
-	}
+
+	n.Left = walkexpr(n.Left, init)
+	walkexprlist(args, init)
 
 	// If this is a method call, add the receiver at the beginning of the args.
 	if n.Op == OCALLMETH {
@@ -3380,36 +3379,15 @@ func tracecmpArg(n *Node, t *types.Type, init *Nodes) *Node {
 }
 
 func walkcompareInterface(n *Node, init *Nodes) *Node {
-	// ifaceeq(i1 any-1, i2 any-2) (ret bool);
-	if !types.Identical(n.Left.Type, n.Right.Type) {
-		Fatalf("ifaceeq %v %v %v", n.Op, n.Left.Type, n.Right.Type)
-	}
-	var fn *Node
-	if n.Left.Type.IsEmptyInterface() {
-		fn = syslook("efaceeq")
-	} else {
-		fn = syslook("ifaceeq")
-	}
-
 	n.Right = cheapexpr(n.Right, init)
 	n.Left = cheapexpr(n.Left, init)
-	lt := nod(OITAB, n.Left, nil)
-	rt := nod(OITAB, n.Right, nil)
-	ld := nod(OIDATA, n.Left, nil)
-	rd := nod(OIDATA, n.Right, nil)
-	ld.Type = types.Types[TUNSAFEPTR]
-	rd.Type = types.Types[TUNSAFEPTR]
-	ld.SetTypecheck(1)
-	rd.SetTypecheck(1)
-	call := mkcall1(fn, n.Type, init, lt, ld, rd)
-
-	// Check itable/type before full compare.
-	// Note: short-circuited because order matters.
+	eqtab, eqdata := eqinterface(n.Left, n.Right)
 	var cmp *Node
 	if n.Op == OEQ {
-		cmp = nod(OANDAND, nod(OEQ, lt, rt), call)
+		cmp = nod(OANDAND, eqtab, eqdata)
 	} else {
-		cmp = nod(OOROR, nod(ONE, lt, rt), nod(ONOT, call, nil))
+		eqtab.Op = ONE
+		cmp = nod(OOROR, eqtab, nod(ONOT, eqdata, nil))
 	}
 	return finishcompare(n, cmp, init)
 }
@@ -3519,27 +3497,16 @@ func walkcompareString(n *Node, init *Nodes) *Node {
 		// prepare for rewrite below
 		n.Left = cheapexpr(n.Left, init)
 		n.Right = cheapexpr(n.Right, init)
-
-		lstr := conv(n.Left, types.Types[TSTRING])
-		rstr := conv(n.Right, types.Types[TSTRING])
-		lptr := nod(OSPTR, lstr, nil)
-		rptr := nod(OSPTR, rstr, nil)
-		llen := conv(nod(OLEN, lstr, nil), types.Types[TUINTPTR])
-		rlen := conv(nod(OLEN, rstr, nil), types.Types[TUINTPTR])
-
-		fn := syslook("memequal")
-		fn = substArgTypes(fn, types.Types[TUINT8], types.Types[TUINT8])
-		r = mkcall1(fn, types.Types[TBOOL], init, lptr, rptr, llen)
-
+		eqlen, eqmem := eqstring(n.Left, n.Right)
 		// quick check of len before full compare for == or !=.
 		// memequal then tests equality up to length len.
 		if n.Op == OEQ {
 			// len(left) == len(right) && memequal(left, right, len)
-			r = nod(OANDAND, nod(OEQ, llen, rlen), r)
+			r = nod(OANDAND, eqlen, eqmem)
 		} else {
 			// len(left) != len(right) || !memequal(left, right, len)
-			r = nod(ONOT, r, nil)
-			r = nod(OOROR, nod(ONE, llen, rlen), r)
+			eqlen.Op = ONE
+			r = nod(OOROR, eqlen, nod(ONOT, eqmem, nil))
 		}
 	} else {
 		// sys_cmpstring(s1, s2) :: 0
@@ -3979,10 +3946,8 @@ func walkCheckPtrArithmetic(n *Node, init *Nodes) *Node {
 
 	n = cheapexpr(n, init)
 
-	ddd := nodl(n.Pos, ODDDARG, nil, nil)
-	ddd.Type = types.NewPtr(types.NewArray(types.Types[TUNSAFEPTR], int64(len(originals))))
-	ddd.Esc = EscNone
-	slice := mkdotargslice(types.NewSlice(types.Types[TUNSAFEPTR]), originals, init, ddd)
+	slice := mkdotargslice(types.NewSlice(types.Types[TUNSAFEPTR]), originals)
+	slice.Esc = EscNone
 
 	init.Append(mkcall("checkptrArithmetic", nil, init, convnop(n, types.Types[TUNSAFEPTR]), slice))
 	// TODO(khr): Mark backing store of slice as dead. This will allow us to reuse

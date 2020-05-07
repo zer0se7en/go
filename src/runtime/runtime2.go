@@ -971,7 +971,7 @@ const (
 	waitReasonChanReceive                             // "chan receive"
 	waitReasonChanSend                                // "chan send"
 	waitReasonFinalizerWait                           // "finalizer wait"
-	waitReasonForceGGIdle                             // "force gc (idle)"
+	waitReasonForceGCIdle                             // "force gc (idle)"
 	waitReasonSemacquire                              // "semacquire"
 	waitReasonSleep                                   // "sleep"
 	waitReasonSyncCondWait                            // "sync.Cond.Wait"
@@ -980,6 +980,7 @@ const (
 	waitReasonWaitForGCCycle                          // "wait for GC cycle"
 	waitReasonGCWorkerIdle                            // "GC worker (idle)"
 	waitReasonPreempted                               // "preempted"
+	waitReasonDebugCall                               // "debug call"
 )
 
 var waitReasonStrings = [...]string{
@@ -1000,7 +1001,7 @@ var waitReasonStrings = [...]string{
 	waitReasonChanReceive:           "chan receive",
 	waitReasonChanSend:              "chan send",
 	waitReasonFinalizerWait:         "finalizer wait",
-	waitReasonForceGGIdle:           "force gc (idle)",
+	waitReasonForceGCIdle:           "force gc (idle)",
 	waitReasonSemacquire:            "semacquire",
 	waitReasonSleep:                 "sleep",
 	waitReasonSyncCondWait:          "sync.Cond.Wait",
@@ -1009,6 +1010,7 @@ var waitReasonStrings = [...]string{
 	waitReasonWaitForGCCycle:        "wait for GC cycle",
 	waitReasonGCWorkerIdle:          "GC worker (idle)",
 	waitReasonPreempted:             "preempted",
+	waitReasonDebugCall:             "debug call",
 }
 
 func (w waitReason) String() string {

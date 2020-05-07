@@ -114,7 +114,10 @@ require downgrading other dependencies, and 'go get' does
 this automatically as well.
 
 The -insecure flag permits fetching from repositories and resolving
-custom domains using insecure schemes such as HTTP. Use with caution.
+custom domains using insecure schemes such as HTTP. Use with caution. The
+GOINSECURE environment variable is usually a better alternative, since it
+provides control over which modules may be retrieved using an insecure scheme.
+See 'go help environment' for details.
 
 The second step is to download (if needed), build, and install
 the named packages.
@@ -305,6 +308,20 @@ func runGet(cmd *base.Command, args []string) {
 		if strings.Contains(vers, "@") || arg != path && vers == "" {
 			base.Errorf("go get %s: invalid module version syntax", arg)
 			continue
+		}
+
+		// Guard against 'go get x.go', a common mistake.
+		// Note that package and module paths may end with '.go', so only print an error
+		// if the argument has no version and either has no slash or refers to an existing file.
+		if strings.HasSuffix(arg, ".go") && vers == "" {
+			if !strings.Contains(arg, "/") {
+				base.Errorf("go get %s: arguments must be package or module paths", arg)
+				continue
+			}
+			if fi, err := os.Stat(arg); err == nil && !fi.IsDir() {
+				base.Errorf("go get: %s exists as a file, but 'go get' requires package arguments", arg)
+				continue
+			}
 		}
 
 		// If no version suffix is specified, assume @upgrade.

@@ -33,6 +33,7 @@ package obj
 import (
 	"bufio"
 	"cmd/internal/dwarf"
+	"cmd/internal/goobj2"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"cmd/internal/sys"
@@ -412,7 +413,7 @@ type FuncInfo struct {
 
 	GCArgs             *LSym
 	GCLocals           *LSym
-	GCRegs             *LSym
+	GCRegs             *LSym // Only if !go115ReduceLiveness
 	StackObjects       *LSym
 	OpenCodedDeferInfo *LSym
 
@@ -666,7 +667,7 @@ type Link struct {
 	PosTable           src.PosTable
 	InlTree            InlTree // global inlining tree used by gc/inl.go
 	DwFixups           *DwarfFixupTable
-	Imports            []string
+	Imports            []goobj2.ImportedPkg
 	DiagFunc           func(string, ...interface{})
 	DiagFlush          func()
 	DebugInfo          func(fn *LSym, info *LSym, curfn interface{}) ([]dwarf.Scope, dwarf.InlCalls) // if non-nil, curfn is a *gc.Node
@@ -675,7 +676,8 @@ type Link struct {
 
 	InParallel           bool // parallel backend phase in effect
 	Framepointer_enabled bool
-	UseBASEntries        bool // Use Base Address Selection Entries in location lists and PC ranges
+	UseBASEntries        bool // use Base Address Selection Entries in location lists and PC ranges
+	IsAsm                bool // is the source assembly language, which may contain surprising idioms (e.g., call tables)
 
 	// state for writing objects
 	Text []*LSym
@@ -698,6 +700,8 @@ type Link struct {
 	defs       []*LSym // list of defined symbols in the current package
 	nonpkgdefs []*LSym // list of defined non-package symbols
 	nonpkgrefs []*LSym // list of referenced non-package symbols
+
+	Fingerprint goobj2.FingerprintType // fingerprint of symbol indices, to catch index mismatch
 }
 
 func (ctxt *Link) Diag(format string, args ...interface{}) {
