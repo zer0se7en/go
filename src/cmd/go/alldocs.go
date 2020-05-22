@@ -1313,10 +1313,10 @@
 // and its test source files to identify significant problems. If go vet
 // finds any problems, go test reports those and does not run the test
 // binary. Only a high-confidence subset of the default go vet checks are
-// used. That subset is: 'atomic', 'bool', 'buildtags', 'nilfunc', and
-// 'printf'. You can see the documentation for these and other vet tests
-// via "go doc cmd/vet". To disable the running of go vet, use the
-// -vet=off flag.
+// used. That subset is: 'atomic', 'bool', 'buildtags', 'errorsas',
+// 'ifaceassert', 'nilfunc', 'printf', and 'stringintconv'. You can see
+// the documentation for these and other vet tests via "go doc cmd/vet".
+// To disable the running of go vet, use the -vet=off flag.
 //
 // All test output and summary lines are printed to the go command's
 // standard output, even if the test printed them to its own standard
@@ -1754,9 +1754,6 @@
 // 	GO386
 // 		For GOARCH=386, the floating point instruction set.
 // 		Valid values are 387, sse2.
-// 	GOAMD64
-// 		For GOARCH=amd64, jumps can be optionally be aligned such that they do not end on
-// 		or cross 32 byte boundaries.  Valid values are alignedjumps (default), normaljumps.
 // 	GOMIPS
 // 		For GOARCH=mips{,le}, whether to use floating point instructions.
 // 		Valid values are hardfloat (default), softfloat.
