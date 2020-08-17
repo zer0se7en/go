@@ -7,6 +7,7 @@ package load
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"cmd/go/internal/par"
 	"cmd/go/internal/search"
 	"cmd/go/internal/str"
+	"cmd/go/internal/trace"
 )
 
 var (
@@ -239,11 +241,25 @@ func (p *Package) setLoadPackageDataError(err error, path string, stk *ImportSta
 		err = &NoGoError{Package: p}
 	}
 
+	// Take only the first error from a scanner.ErrorList. PackageError only
+	// has room for one position, so we report the first error with a position
+	// instead of all of the errors without a position.
+	var pos string
+	var isScanErr bool
+	if scanErr, ok := err.(scanner.ErrorList); ok && len(scanErr) > 0 {
+		isScanErr = true // For stack push/pop below.
+
+		scanPos := scanErr[0].Pos
+		scanPos.Filename = base.ShortPath(scanPos.Filename)
+		pos = scanPos.String()
+		err = errors.New(scanErr[0].Msg)
+	}
+
 	// Report the error on the importing package if the problem is with the import declaration
 	// for example, if the package doesn't exist or if the import path is malformed.
 	// On the other hand, don't include a position if the problem is with the imported package,
 	// for example there are no Go files (NoGoError), or there's a problem in the imported
-	// package's source files themselves.
+	// package's source files themselves (scanner errors).
 	//
 	// TODO(matloob): Perhaps make each of those the errors in the first group
 	// (including modload.ImportMissingError, and the corresponding
@@ -254,20 +270,9 @@ func (p *Package) setLoadPackageDataError(err error, path string, stk *ImportSta
 	// to make it easier to check for them? That would save us from having to
 	// move the modload errors into this package to avoid a package import cycle,
 	// and from having to export an error type for the errors produced in build.
-	if !isMatchErr && nogoErr != nil {
+	if !isMatchErr && (nogoErr != nil || isScanErr) {
 		stk.Push(path)
 		defer stk.Pop()
-	}
-
-	// Take only the first error from a scanner.ErrorList. PackageError only
-	// has room for one position, so we report the first error with a position
-	// instead of all of the errors without a position.
-	var pos string
-	if scanErr, ok := err.(scanner.ErrorList); ok && len(scanErr) > 0 {
-		scanPos := scanErr[0].Pos
-		scanPos.Filename = base.ShortPath(scanPos.Filename)
-		pos = scanPos.String()
-		err = errors.New(scanErr[0].Msg)
 	}
 
 	p.Error = &PackageError{
@@ -2120,9 +2125,9 @@ func LoadImportWithFlags(path, srcDir string, parent *Package, stk *ImportStack,
 // to load dependencies of a named package, the named
 // package is still returned, with p.Incomplete = true
 // and details in p.DepsErrors.
-func Packages(args []string) []*Package {
+func Packages(ctx context.Context, args []string) []*Package {
 	var pkgs []*Package
-	for _, pkg := range PackagesAndErrors(args) {
+	for _, pkg := range PackagesAndErrors(ctx, args) {
 		if pkg.Error != nil {
 			base.Errorf("%v", pkg.Error)
 			continue
@@ -2136,7 +2141,10 @@ func Packages(args []string) []*Package {
 // *Package for every argument, even the ones that
 // cannot be loaded at all.
 // The packages that fail to load will have p.Error != nil.
-func PackagesAndErrors(patterns []string) []*Package {
+func PackagesAndErrors(ctx context.Context, patterns []string) []*Package {
+	ctx, span := trace.StartSpan(ctx, "load.PackagesAndErrors")
+	defer span.Done()
+
 	for _, p := range patterns {
 		// Listing is only supported with all patterns referring to either:
 		// - Files that are part of the same directory.
@@ -2230,8 +2238,8 @@ func ImportPaths(args []string) []*search.Match {
 // PackagesForBuild is like Packages but exits
 // if any of the packages or their dependencies have errors
 // (cannot be built).
-func PackagesForBuild(args []string) []*Package {
-	pkgs := PackagesAndErrors(args)
+func PackagesForBuild(ctx context.Context, args []string) []*Package {
+	pkgs := PackagesAndErrors(ctx, args)
 	printed := map[*PackageError]bool{}
 	for _, pkg := range pkgs {
 		if pkg.Error != nil {
