@@ -220,7 +220,7 @@ func adddynrel(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, s loade
 		addpltsym(target, ldr, syms, targ)
 		su := ldr.MakeSymbolUpdater(s)
 		su.SetRelocSym(rIdx, syms.PLT)
-		su.SetRelocAdd(rIdx, int64(ldr.SymPlt(targ)))
+		su.SetRelocAdd(rIdx, int64(braddoff(int32(r.Add()), ldr.SymPlt(targ)/4))) // TODO: don't use r.Add for instruction bytes (issue 19811)
 		return true
 
 	case objabi.R_ADDR:
@@ -231,7 +231,7 @@ func adddynrel(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, s loade
 			ld.Adddynsym(ldr, target, syms, targ)
 			rel := ldr.MakeSymbolUpdater(syms.Rel)
 			rel.AddAddrPlus(target.Arch, s, int64(r.Off()))
-			rel.AddUint32(target.Arch, ld.ELF32_R_INFO(uint32(ldr.SymDynid(targ)), uint32(elf.R_ARM_GLOB_DAT))) // we need a nil + A dynamic reloc
+			rel.AddUint32(target.Arch, elf.R_INFO32(uint32(ldr.SymDynid(targ)), uint32(elf.R_ARM_GLOB_DAT))) // we need a nil + A dynamic reloc
 			su := ldr.MakeSymbolUpdater(s)
 			su.SetRelocType(rIdx, objabi.R_CONST) // write r->add during relocsym
 			su.SetRelocSym(rIdx, 0)
@@ -629,7 +629,7 @@ func addpltsym(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, s loade
 		// rel
 		rel.AddAddrPlus(target.Arch, got.Sym(), int64(ldr.SymGot(s)))
 
-		rel.AddUint32(target.Arch, ld.ELF32_R_INFO(uint32(ldr.SymDynid(s)), uint32(elf.R_ARM_JUMP_SLOT)))
+		rel.AddUint32(target.Arch, elf.R_INFO32(uint32(ldr.SymDynid(s)), uint32(elf.R_ARM_JUMP_SLOT)))
 	} else {
 		ldr.Errorf(s, "addpltsym: unsupported binary format")
 	}

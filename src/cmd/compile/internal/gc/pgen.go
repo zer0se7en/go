@@ -80,8 +80,8 @@ func cmpstackvarlt(a, b *Node) bool {
 		return a.Name.Used()
 	}
 
-	ap := types.Haspointers(a.Type)
-	bp := types.Haspointers(b.Type)
+	ap := a.Type.HasPointers()
+	bp := b.Type.HasPointers()
 	if ap != bp {
 		return ap
 	}
@@ -176,7 +176,7 @@ func (s *ssafn) AllocFrame(f *ssa.Func) {
 		}
 		s.stksize += w
 		s.stksize = Rnd(s.stksize, int64(n.Type.Align))
-		if types.Haspointers(n.Type) {
+		if n.Type.HasPointers() {
 			s.stkptrsize = s.stksize
 			lastHasPtr = true
 		} else {
@@ -231,6 +231,11 @@ func compile(fn *Node) {
 		return
 	}
 
+	// Set up the function's LSym early to avoid data races with the assemblers.
+	// Do this before walk, as walk needs the LSym to set attributes/relocations
+	// (e.g. in markTypeUsedInInterface).
+	fn.Func.initLSym(true)
+
 	walk(fn)
 	if nerrors != 0 {
 		return
@@ -250,9 +255,6 @@ func compile(fn *Node) {
 		return
 	}
 
-	// Set up the function's LSym early to avoid data races with the assemblers.
-	fn.Func.initLSym(true)
-
 	// Make sure type syms are declared for all types that might
 	// be types of stack objects. We need to do this here
 	// because symbols must be allocated before the parallel
@@ -264,8 +266,8 @@ func compile(fn *Node) {
 				dtypesym(n.Type)
 				// Also make sure we allocate a linker symbol
 				// for the stack object data, for the same reason.
-				if fn.Func.lsym.Func.StackObjects == nil {
-					fn.Func.lsym.Func.StackObjects = Ctxt.Lookup(fn.Func.lsym.Name + ".stkobj")
+				if fn.Func.lsym.Func().StackObjects == nil {
+					fn.Func.lsym.Func().StackObjects = Ctxt.Lookup(fn.Func.lsym.Name + ".stkobj")
 				}
 			}
 		}
@@ -413,7 +415,7 @@ func debuginfo(fnsym *obj.LSym, infosym *obj.LSym, curfn interface{}) ([]dwarf.S
 		case PAUTO:
 			if !n.Name.Used() {
 				// Text == nil -> generating abstract function
-				if fnsym.Func.Text != nil {
+				if fnsym.Func().Text != nil {
 					Fatalf("debuginfo unused node (AllocFrame should truncate fn.Func.Dcl)")
 				}
 				continue
@@ -423,7 +425,7 @@ func debuginfo(fnsym *obj.LSym, infosym *obj.LSym, curfn interface{}) ([]dwarf.S
 			continue
 		}
 		apdecls = append(apdecls, n)
-		fnsym.Func.RecordAutoType(ngotype(n).Linksym())
+		fnsym.Func().RecordAutoType(ngotype(n).Linksym())
 	}
 
 	decls, dwarfVars := createDwarfVars(fnsym, fn.Func, apdecls)
@@ -433,7 +435,7 @@ func debuginfo(fnsym *obj.LSym, infosym *obj.LSym, curfn interface{}) ([]dwarf.S
 	// the function symbol to insure that the type included in DWARF
 	// processing during linking.
 	typesyms := []*obj.LSym{}
-	for t, _ := range fnsym.Func.Autot {
+	for t, _ := range fnsym.Func().Autot {
 		typesyms = append(typesyms, t)
 	}
 	sort.Sort(obj.BySymName(typesyms))
@@ -442,7 +444,7 @@ func debuginfo(fnsym *obj.LSym, infosym *obj.LSym, curfn interface{}) ([]dwarf.S
 		r.Sym = sym
 		r.Type = objabi.R_USETYPE
 	}
-	fnsym.Func.Autot = nil
+	fnsym.Func().Autot = nil
 
 	var varScopes []ScopeID
 	for _, decl := range decls {
@@ -507,7 +509,7 @@ func createSimpleVar(fnsym *obj.LSym, n *Node) *dwarf.Var {
 		if Ctxt.FixedFrameSize() == 0 {
 			offs -= int64(Widthptr)
 		}
-		if objabi.Framepointer_enabled(objabi.GOOS, objabi.GOARCH) || objabi.GOARCH == "arm64" {
+		if objabi.Framepointer_enabled || objabi.GOARCH == "arm64" {
 			// There is a word space for FP on ARM64 even if the frame pointer is disabled
 			offs -= int64(Widthptr)
 		}
@@ -520,7 +522,7 @@ func createSimpleVar(fnsym *obj.LSym, n *Node) *dwarf.Var {
 	}
 
 	typename := dwarf.InfoPrefix + typesymname(n.Type)
-	delete(fnsym.Func.Autot, ngotype(n).Linksym())
+	delete(fnsym.Func().Autot, ngotype(n).Linksym())
 	inlIndex := 0
 	if genDwarfInline > 1 {
 		if n.Name.InlFormal() || n.Name.InlLocal() {
@@ -665,7 +667,7 @@ func createDwarfVars(fnsym *obj.LSym, fn *Func, apDecls []*Node) ([]*Node, []*dw
 			ChildIndex:    -1,
 		})
 		// Record go type of to insure that it gets emitted by the linker.
-		fnsym.Func.RecordAutoType(ngotype(n).Linksym())
+		fnsym.Func().RecordAutoType(ngotype(n).Linksym())
 	}
 
 	return decls, vars
@@ -703,7 +705,7 @@ func stackOffset(slot ssa.LocalSlot) int32 {
 		if Ctxt.FixedFrameSize() == 0 {
 			base -= int64(Widthptr)
 		}
-		if objabi.Framepointer_enabled(objabi.GOOS, objabi.GOARCH) || objabi.GOARCH == "arm64" {
+		if objabi.Framepointer_enabled || objabi.GOARCH == "arm64" {
 			// There is a word space for FP on ARM64 even if the frame pointer is disabled
 			base -= int64(Widthptr)
 		}
@@ -729,7 +731,7 @@ func createComplexVar(fnsym *obj.LSym, fn *Func, varID ssa.VarID) *dwarf.Var {
 	}
 
 	gotype := ngotype(n).Linksym()
-	delete(fnsym.Func.Autot, gotype)
+	delete(fnsym.Func().Autot, gotype)
 	typename := dwarf.InfoPrefix + gotype.Name[len("type."):]
 	inlIndex := 0
 	if genDwarfInline > 1 {
