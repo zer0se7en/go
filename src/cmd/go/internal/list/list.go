@@ -89,6 +89,10 @@ to -f '{{.ImportPath}}'. The struct being passed to the template is:
         TestGoFiles     []string   // _test.go files in package
         XTestGoFiles    []string   // _test.go files outside package
 
+        // Embedded files
+        EmbedPatterns []string // //go:embed patterns
+        EmbedFiles    []string // files and directories matched by EmbedPatterns
+
         // Cgo directives
         CgoCFLAGS    []string // cgo: flags for C compiler
         CgoCPPFLAGS  []string // cgo: flags for C preprocessor
@@ -300,7 +304,7 @@ For more about build flags, see 'go help build'.
 
 For more about specifying packages, see 'go help packages'.
 
-For more about modules, see 'go help modules'.
+For more about modules, see https://golang.org/ref/mod.
 	`,
 }
 
@@ -577,8 +581,6 @@ func runList(ctx context.Context, cmd *base.Command, args []string) {
 		// Show vendor-expanded paths in listing
 		p.TestImports = p.Resolve(p.TestImports)
 		p.XTestImports = p.Resolve(p.XTestImports)
-		p.TestEmbedFiles = p.ResolveEmbed(p.TestEmbedPatterns)
-		p.XTestEmbedFiles = p.ResolveEmbed(p.XTestEmbedPatterns)
 		p.DepOnly = !cmdline[p]
 
 		if *listCompiled {

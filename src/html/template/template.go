@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"text/template"
 	"text/template/parse"
@@ -35,18 +36,20 @@ var escapeOK = fmt.Errorf("template escaped correctly")
 
 // nameSpace is the data structure shared by all templates in an association.
 type nameSpace struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	set     map[string]*Template
 	escaped bool
 	esc     escaper
+	// The original functions, before wrapping.
+	funcMap FuncMap
 }
 
 // Templates returns a slice of the templates associated with t, including t
 // itself.
 func (t *Template) Templates() []*Template {
 	ns := t.nameSpace
-	ns.mu.Lock()
-	defer ns.mu.Unlock()
+	ns.mu.RLock()
+	defer ns.mu.RUnlock()
 	// Return a slice so we don't expose the map.
 	m := make([]*Template, 0, len(ns.set))
 	for _, v := range ns.set {
@@ -84,8 +87,8 @@ func (t *Template) checkCanParse() error {
 	if t == nil {
 		return nil
 	}
-	t.nameSpace.mu.Lock()
-	defer t.nameSpace.mu.Unlock()
+	t.nameSpace.mu.RLock()
+	defer t.nameSpace.mu.RUnlock()
 	if t.nameSpace.escaped {
 		return fmt.Errorf("html/template: cannot Parse after Execute")
 	}
@@ -94,6 +97,16 @@ func (t *Template) checkCanParse() error {
 
 // escape escapes all associated templates.
 func (t *Template) escape() error {
+	t.nameSpace.mu.RLock()
+	escapeErr := t.escapeErr
+	t.nameSpace.mu.RUnlock()
+	if escapeErr != nil {
+		if escapeErr == escapeOK {
+			return nil
+		}
+		return escapeErr
+	}
+
 	t.nameSpace.mu.Lock()
 	defer t.nameSpace.mu.Unlock()
 	t.nameSpace.escaped = true
@@ -121,6 +134,8 @@ func (t *Template) Execute(wr io.Writer, data interface{}) error {
 	if err := t.escape(); err != nil {
 		return err
 	}
+	t.nameSpace.mu.RLock()
+	defer t.nameSpace.mu.RUnlock()
 	return t.text.Execute(wr, data)
 }
 
@@ -136,6 +151,8 @@ func (t *Template) ExecuteTemplate(wr io.Writer, name string, data interface{}) 
 	if err != nil {
 		return err
 	}
+	t.nameSpace.mu.RLock()
+	defer t.nameSpace.mu.RUnlock()
 	return tmpl.text.Execute(wr, data)
 }
 
@@ -143,13 +160,27 @@ func (t *Template) ExecuteTemplate(wr io.Writer, name string, data interface{}) 
 // is escaped, or returns an error if it cannot be. It returns the named
 // template.
 func (t *Template) lookupAndEscapeTemplate(name string) (tmpl *Template, err error) {
-	t.nameSpace.mu.Lock()
-	defer t.nameSpace.mu.Unlock()
-	t.nameSpace.escaped = true
+	t.nameSpace.mu.RLock()
 	tmpl = t.set[name]
+	var escapeErr error
+	if tmpl != nil {
+		escapeErr = tmpl.escapeErr
+	}
+	t.nameSpace.mu.RUnlock()
+
 	if tmpl == nil {
 		return nil, fmt.Errorf("html/template: %q is undefined", name)
 	}
+	if escapeErr != nil {
+		if escapeErr != escapeOK {
+			return nil, escapeErr
+		}
+		return tmpl, nil
+	}
+
+	t.nameSpace.mu.Lock()
+	defer t.nameSpace.mu.Unlock()
+	t.nameSpace.escaped = true
 	if tmpl.escapeErr != nil && tmpl.escapeErr != escapeOK {
 		return nil, tmpl.escapeErr
 	}
@@ -255,6 +286,13 @@ func (t *Template) Clone() (*Template, error) {
 	}
 	ns := &nameSpace{set: make(map[string]*Template)}
 	ns.esc = makeEscaper(ns)
+	if t.nameSpace.funcMap != nil {
+		ns.funcMap = make(FuncMap, len(t.nameSpace.funcMap))
+		for name, fn := range t.nameSpace.funcMap {
+			ns.funcMap[name] = fn
+		}
+	}
+	wrapFuncs(ns, textClone, ns.funcMap)
 	ret := &Template{
 		nil,
 		textClone,
@@ -269,12 +307,13 @@ func (t *Template) Clone() (*Template, error) {
 			return nil, fmt.Errorf("html/template: cannot Clone %q after it has executed", t.Name())
 		}
 		x.Tree = x.Tree.Copy()
-		ret.set[name] = &Template{
+		tc := &Template{
 			nil,
 			x,
 			x.Tree,
 			ret.nameSpace,
 		}
+		ret.set[name] = tc
 	}
 	// Return the template associated with the name of this template.
 	return ret.set[ret.Name()], nil
@@ -343,8 +382,41 @@ type FuncMap map[string]interface{}
 // type. However, it is legal to overwrite elements of the map. The return
 // value is the template, so calls can be chained.
 func (t *Template) Funcs(funcMap FuncMap) *Template {
-	t.text.Funcs(template.FuncMap(funcMap))
+	t.nameSpace.mu.Lock()
+	if t.nameSpace.funcMap == nil {
+		t.nameSpace.funcMap = make(FuncMap, len(funcMap))
+	}
+	for name, fn := range funcMap {
+		t.nameSpace.funcMap[name] = fn
+	}
+	t.nameSpace.mu.Unlock()
+
+	wrapFuncs(t.nameSpace, t.text, funcMap)
 	return t
+}
+
+// wrapFuncs records the functions with text/template. We wrap them to
+// unlock the nameSpace. See TestRecursiveExecute for a test case.
+func wrapFuncs(ns *nameSpace, textTemplate *template.Template, funcMap FuncMap) {
+	if len(funcMap) == 0 {
+		return
+	}
+	tfuncs := make(template.FuncMap, len(funcMap))
+	for name, fn := range funcMap {
+		fnv := reflect.ValueOf(fn)
+		wrapper := func(args []reflect.Value) []reflect.Value {
+			ns.mu.RUnlock()
+			defer ns.mu.RLock()
+			if fnv.Type().IsVariadic() {
+				return fnv.CallSlice(args)
+			} else {
+				return fnv.Call(args)
+			}
+		}
+		wrapped := reflect.MakeFunc(fnv.Type(), wrapper)
+		tfuncs[name] = wrapped.Interface()
+	}
+	textTemplate.Funcs(tfuncs)
 }
 
 // Delims sets the action delimiters to the specified strings, to be used in
@@ -360,8 +432,8 @@ func (t *Template) Delims(left, right string) *Template {
 // Lookup returns the template with the given name that is associated with t,
 // or nil if there is no such template.
 func (t *Template) Lookup(name string) *Template {
-	t.nameSpace.mu.Lock()
-	defer t.nameSpace.mu.Unlock()
+	t.nameSpace.mu.RLock()
+	defer t.nameSpace.mu.RUnlock()
 	return t.set[name]
 }
 
