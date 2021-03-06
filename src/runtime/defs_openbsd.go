@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build ignore
 // +build ignore
 
 /*
@@ -55,6 +56,11 @@ const (
 	SA_ONSTACK = C.SA_ONSTACK
 
 	PTHREAD_CREATE_DETACHED = C.PTHREAD_CREATE_DETACHED
+
+	F_SETFD    = C.F_SETFD
+	F_GETFL    = C.F_GETFL
+	F_SETFL    = C.F_SETFL
+	FD_CLOEXEC = C.FD_CLOEXEC
 
 	SIGHUP    = C.SIGHUP
 	SIGINT    = C.SIGINT

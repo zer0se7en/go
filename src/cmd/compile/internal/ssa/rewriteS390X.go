@@ -792,6 +792,9 @@ func rewriteValueS390X(v *Value) bool {
 	case OpSqrt:
 		v.Op = OpS390XFSQRT
 		return true
+	case OpSqrt32:
+		v.Op = OpS390XFSQRTS
+		return true
 	case OpStaticCall:
 		v.Op = OpS390XCALLstatic
 		return true
@@ -6332,12 +6335,12 @@ func rewriteValueS390X_OpS390XCMP(v *Value) bool {
 		return true
 	}
 	// match: (CMP x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMP y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpS390XInvertFlags)
@@ -6389,12 +6392,12 @@ func rewriteValueS390X_OpS390XCMPU(v *Value) bool {
 		return true
 	}
 	// match: (CMPU x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMPU y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpS390XInvertFlags)
@@ -6624,12 +6627,12 @@ func rewriteValueS390X_OpS390XCMPW(v *Value) bool {
 		return true
 	}
 	// match: (CMPW x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMPW y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpS390XInvertFlags)
@@ -6721,12 +6724,12 @@ func rewriteValueS390X_OpS390XCMPWU(v *Value) bool {
 		return true
 	}
 	// match: (CMPWU x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMPWU y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpS390XInvertFlags)
@@ -8878,6 +8881,56 @@ func rewriteValueS390X_OpS390XMOVBstore(v *Value) bool {
 		v.AuxInt = int32ToAuxInt(i - 1)
 		v.Aux = symToAux(s)
 		v.AddArg3(p, w0, mem)
+		return true
+	}
+	// match: (MOVBstore [7] {s} p1 (SRDconst w) x1:(MOVHBRstore [5] {s} p1 (SRDconst w) x2:(MOVWBRstore [1] {s} p1 (SRDconst w) x3:(MOVBstore [0] {s} p1 w mem))))
+	// cond: x1.Uses == 1 && x2.Uses == 1 && x3.Uses == 1 && clobber(x1, x2, x3)
+	// result: (MOVDBRstore {s} p1 w mem)
+	for {
+		if auxIntToInt32(v.AuxInt) != 7 {
+			break
+		}
+		s := auxToSym(v.Aux)
+		p1 := v_0
+		if v_1.Op != OpS390XSRDconst {
+			break
+		}
+		w := v_1.Args[0]
+		x1 := v_2
+		if x1.Op != OpS390XMOVHBRstore || auxIntToInt32(x1.AuxInt) != 5 || auxToSym(x1.Aux) != s {
+			break
+		}
+		_ = x1.Args[2]
+		if p1 != x1.Args[0] {
+			break
+		}
+		x1_1 := x1.Args[1]
+		if x1_1.Op != OpS390XSRDconst || w != x1_1.Args[0] {
+			break
+		}
+		x2 := x1.Args[2]
+		if x2.Op != OpS390XMOVWBRstore || auxIntToInt32(x2.AuxInt) != 1 || auxToSym(x2.Aux) != s {
+			break
+		}
+		_ = x2.Args[2]
+		if p1 != x2.Args[0] {
+			break
+		}
+		x2_1 := x2.Args[1]
+		if x2_1.Op != OpS390XSRDconst || w != x2_1.Args[0] {
+			break
+		}
+		x3 := x2.Args[2]
+		if x3.Op != OpS390XMOVBstore || auxIntToInt32(x3.AuxInt) != 0 || auxToSym(x3.Aux) != s {
+			break
+		}
+		mem := x3.Args[2]
+		if p1 != x3.Args[0] || w != x3.Args[1] || !(x1.Uses == 1 && x2.Uses == 1 && x3.Uses == 1 && clobber(x1, x2, x3)) {
+			break
+		}
+		v.reset(OpS390XMOVDBRstore)
+		v.Aux = symToAux(s)
+		v.AddArg3(p1, w, mem)
 		return true
 	}
 	return false

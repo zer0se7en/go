@@ -142,6 +142,8 @@
 (Round       x) => (FIDBR [1] x)
 (FMA     x y z) => (FMADD z x y)
 
+(Sqrt32    ...) => (FSQRTS ...)
+
 // Atomic loads and stores.
 // The SYNC instruction (fast-BCR-serialization) prevents store-load
 // reordering. Other sequences of memory operations (load-load,
@@ -785,7 +787,7 @@
   => (RISBGZ x {s390x.NewRotateParams(r.Start, r.Start, -r.Start&63)})
 
 // Canonicalize the order of arguments to comparisons - helps with CSE.
-((CMP|CMPW|CMPU|CMPWU) x y) && x.ID > y.ID => (InvertFlags ((CMP|CMPW|CMPU|CMPWU) y x))
+((CMP|CMPW|CMPU|CMPWU) x y) && canonLessThan(x,y) => (InvertFlags ((CMP|CMPW|CMPU|CMPWU) y x))
 
 // Use sign/zero extend instead of RISBGZ.
 (RISBGZ x {r}) && r == s390x.NewRotateParams(56, 63, 0) => (MOVBZreg x)
@@ -1419,6 +1421,16 @@
   && x.Uses == 1
   && clobber(x)
   => (MOVDBRstore [i-4] {s} p w0 mem)
+
+(MOVBstore [7] {s} p1 (SRDconst w)
+  x1:(MOVHBRstore [5] {s} p1 (SRDconst w)
+  x2:(MOVWBRstore [1] {s} p1 (SRDconst w)
+  x3:(MOVBstore [0] {s} p1 w mem))))
+  && x1.Uses == 1
+  && x2.Uses == 1
+  && x3.Uses == 1
+  && clobber(x1, x2, x3)
+  => (MOVDBRstore {s} p1 w mem)
 
 // Combining byte loads into larger (unaligned) loads.
 

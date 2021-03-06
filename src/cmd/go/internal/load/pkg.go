@@ -36,6 +36,8 @@ import (
 	"cmd/go/internal/str"
 	"cmd/go/internal/trace"
 	"cmd/internal/sys"
+
+	"golang.org/x/mod/module"
 )
 
 var IgnoreImports bool // control whether we ignore imports in packages
@@ -96,7 +98,7 @@ type PackagePublic struct {
 
 	// Embedded files
 	EmbedPatterns []string `json:",omitempty"` // //go:embed patterns
-	EmbedFiles    []string `json:",omitempty"` // files and directories matched by EmbedPatterns
+	EmbedFiles    []string `json:",omitempty"` // files matched by EmbedPatterns
 
 	// Cgo directives
 	CgoCFLAGS    []string `json:",omitempty"` // cgo: flags for C compiler
@@ -122,11 +124,11 @@ type PackagePublic struct {
 	TestGoFiles        []string `json:",omitempty"` // _test.go files in package
 	TestImports        []string `json:",omitempty"` // imports from TestGoFiles
 	TestEmbedPatterns  []string `json:",omitempty"` // //go:embed patterns
-	TestEmbedFiles     []string `json:",omitempty"` // //files matched by EmbedPatterns
+	TestEmbedFiles     []string `json:",omitempty"` // files matched by TestEmbedPatterns
 	XTestGoFiles       []string `json:",omitempty"` // _test.go files outside package
 	XTestImports       []string `json:",omitempty"` // imports from XTestGoFiles
 	XTestEmbedPatterns []string `json:",omitempty"` // //go:embed patterns
-	XTestEmbedFiles    []string `json:",omitempty"` // //files matched by EmbedPatterns
+	XTestEmbedFiles    []string `json:",omitempty"` // files matched by XTestEmbedPatterns
 }
 
 // AllFiles returns the names of all the files considered for the package.
@@ -2090,6 +2092,9 @@ func validEmbedPattern(pattern string) bool {
 // can't or won't be included in modules and therefore shouldn't be treated
 // as existing for embedding.
 func isBadEmbedName(name string) bool {
+	if err := module.CheckFilePath(name); err != nil {
+		return true
+	}
 	switch name {
 	// Empty string should be impossible but make it bad.
 	case "":

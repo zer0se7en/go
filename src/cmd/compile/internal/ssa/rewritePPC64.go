@@ -743,6 +743,9 @@ func rewriteValuePPC64(v *Value) bool {
 	case OpSqrt:
 		v.Op = OpPPC64FSQRT
 		return true
+	case OpSqrt32:
+		v.Op = OpPPC64FSQRTS
+		return true
 	case OpStaticCall:
 		v.Op = OpPPC64CALLstatic
 		return true
@@ -4777,12 +4780,12 @@ func rewriteValuePPC64_OpPPC64CMP(v *Value) bool {
 		return true
 	}
 	// match: (CMP x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMP y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpPPC64InvertFlags)
@@ -4834,12 +4837,12 @@ func rewriteValuePPC64_OpPPC64CMPU(v *Value) bool {
 		return true
 	}
 	// match: (CMPU x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMPU y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpPPC64InvertFlags)
@@ -4964,12 +4967,12 @@ func rewriteValuePPC64_OpPPC64CMPW(v *Value) bool {
 		return true
 	}
 	// match: (CMPW x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMPW y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpPPC64InvertFlags)
@@ -5045,12 +5048,12 @@ func rewriteValuePPC64_OpPPC64CMPWU(v *Value) bool {
 		return true
 	}
 	// match: (CMPWU x y)
-	// cond: x.ID > y.ID
+	// cond: canonLessThan(x,y)
 	// result: (InvertFlags (CMPWU y x))
 	for {
 		x := v_0
 		y := v_1
-		if !(x.ID > y.ID) {
+		if !(canonLessThan(x, y)) {
 			break
 		}
 		v.reset(OpPPC64InvertFlags)

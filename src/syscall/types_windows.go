@@ -4,6 +4,8 @@
 
 package syscall
 
+import "unsafe"
+
 const (
 	// Windows errors.
 	ERROR_FILE_NOT_FOUND      Errno = 2
@@ -398,6 +400,14 @@ type win32finddata1 struct {
 	Reserved1         uint32
 	FileName          [MAX_PATH]uint16
 	AlternateFileName [14]uint16
+
+	// The Microsoft documentation for this struct¹ describes three additional
+	// fields: dwFileType, dwCreatorType, and wFinderFlags. However, those fields
+	// are empirically only present in the macOS port of the Win32 API,² and thus
+	// not needed for binaries built for Windows.
+	//
+	// ¹ https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-win32_find_dataw
+	// ² https://golang.org/issue/42637#issuecomment-760715755
 }
 
 func copyFindData(dst *Win32finddata, src *win32finddata1) {
@@ -481,6 +491,26 @@ type StartupInfo struct {
 	StdOutput     Handle
 	StdErr        Handle
 }
+
+type _PROC_THREAD_ATTRIBUTE_LIST struct {
+	// This is of type unsafe.Pointer, not of type byte or uintptr, because
+	// the contents of it is mostly a list of pointers, and in most cases,
+	// that's a list of pointers to Go-allocated objects. In order to keep
+	// the GC from collecting these objects, we declare this as unsafe.Pointer.
+	_ [1]unsafe.Pointer
+}
+
+const (
+	_PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000
+	_PROC_THREAD_ATTRIBUTE_HANDLE_LIST    = 0x00020002
+)
+
+type _STARTUPINFOEXW struct {
+	StartupInfo
+	ProcThreadAttributeList *_PROC_THREAD_ATTRIBUTE_LIST
+}
+
+const _EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 
 type ProcessInformation struct {
 	Process   Handle

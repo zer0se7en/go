@@ -28,10 +28,8 @@ import (
 )
 
 func cacheDir(path string) (string, error) {
-	if cfg.GOMODCACHE == "" {
-		// modload.Init exits if GOPATH[0] is empty, and cfg.GOMODCACHE
-		// is set to GOPATH[0]/pkg/mod if GOMODCACHE is empty, so this should never happen.
-		return "", fmt.Errorf("internal error: cfg.GOMODCACHE not set")
+	if err := checkCacheDir(); err != nil {
+		return "", err
 	}
 	enc, err := module.EscapePath(path)
 	if err != nil {
@@ -64,10 +62,8 @@ func CachePath(m module.Version, suffix string) (string, error) {
 // along with the directory if the directory does not exist or if the directory
 // is not completely populated.
 func DownloadDir(m module.Version) (string, error) {
-	if cfg.GOMODCACHE == "" {
-		// modload.Init exits if GOPATH[0] is empty, and cfg.GOMODCACHE
-		// is set to GOPATH[0]/pkg/mod if GOMODCACHE is empty, so this should never happen.
-		return "", fmt.Errorf("internal error: cfg.GOMODCACHE not set")
+	if err := checkCacheDir(); err != nil {
+		return "", err
 	}
 	enc, err := module.EscapePath(m.Path)
 	if err != nil {
@@ -84,6 +80,7 @@ func DownloadDir(m module.Version) (string, error) {
 		return "", err
 	}
 
+	// Check whether the directory itself exists.
 	dir := filepath.Join(cfg.GOMODCACHE, enc+"@"+encVer)
 	if fi, err := os.Stat(dir); os.IsNotExist(err) {
 		return dir, err
@@ -92,6 +89,9 @@ func DownloadDir(m module.Version) (string, error) {
 	} else if !fi.IsDir() {
 		return dir, &DownloadDirPartialError{dir, errors.New("not a directory")}
 	}
+
+	// Check if a .partial file exists. This is created at the beginning of
+	// a download and removed after the zip is extracted.
 	partialPath, err := CachePath(m, "partial")
 	if err != nil {
 		return dir, err
@@ -99,6 +99,19 @@ func DownloadDir(m module.Version) (string, error) {
 	if _, err := os.Stat(partialPath); err == nil {
 		return dir, &DownloadDirPartialError{dir, errors.New("not completely extracted")}
 	} else if !os.IsNotExist(err) {
+		return dir, err
+	}
+
+	// Check if a .ziphash file exists. It should be created before the
+	// zip is extracted, but if it was deleted (by another program?), we need
+	// to re-calculate it.
+	ziphashPath, err := CachePath(m, "ziphash")
+	if err != nil {
+		return dir, err
+	}
+	if _, err := os.Stat(ziphashPath); os.IsNotExist(err) {
+		return dir, &DownloadDirPartialError{dir, errors.New("ziphash file is missing")}
+	} else if err != nil {
 		return dir, err
 	}
 	return dir, nil
@@ -134,10 +147,8 @@ func lockVersion(mod module.Version) (unlock func(), err error) {
 // user's working directory.
 // If err is nil, the caller MUST eventually call the unlock function.
 func SideLock() (unlock func(), err error) {
-	if cfg.GOMODCACHE == "" {
-		// modload.Init exits if GOPATH[0] is empty, and cfg.GOMODCACHE
-		// is set to GOPATH[0]/pkg/mod if GOMODCACHE is empty, so this should never happen.
-		base.Fatalf("go: internal error: cfg.GOMODCACHE not set")
+	if err := checkCacheDir(); err != nil {
+		base.Fatalf("go: %v", err)
 	}
 
 	path := filepath.Join(cfg.GOMODCACHE, "cache", "lock")
@@ -632,4 +643,17 @@ func rewriteVersionList(dir string) {
 	if err := renameio.WriteFile(listFile, buf.Bytes(), 0666); err != nil {
 		base.Fatalf("go: failed to write version list: %v", err)
 	}
+}
+
+func checkCacheDir() error {
+	if cfg.GOMODCACHE == "" {
+		// modload.Init exits if GOPATH[0] is empty, and cfg.GOMODCACHE
+		// is set to GOPATH[0]/pkg/mod if GOMODCACHE is empty, so this should never happen.
+		return fmt.Errorf("internal error: cfg.GOMODCACHE not set")
+	}
+
+	if !filepath.IsAbs(cfg.GOMODCACHE) {
+		return fmt.Errorf("GOMODCACHE entry is relative; must be absolute path: %q.\n", cfg.GOMODCACHE)
+	}
+	return nil
 }
