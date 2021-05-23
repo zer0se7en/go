@@ -27,7 +27,7 @@ const (
 	removeDeadValues                 = true
 )
 
-// deadcode indicates that rewrite should try to remove any values that become dead.
+// deadcode indicates whether rewrite should try to remove any values that become dead.
 func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter, deadcode deadValueChoice) {
 	// repeat rewrites until we find no more rewrites
 	pendingLines := f.cachedLineStarts // Holds statement boundaries that need to be moved to a new value/block
@@ -159,7 +159,7 @@ func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter, deadcode deadValu
 				f.freeValue(v)
 				continue
 			}
-			if v.Pos.IsStmt() != src.PosNotStmt && pendingLines.get(vl) == int32(b.ID) {
+			if v.Pos.IsStmt() != src.PosNotStmt && !notStmtBoundary(v.Op) && pendingLines.get(vl) == int32(b.ID) {
 				pendingLines.remove(vl)
 				v.Pos = v.Pos.WithIsStmt()
 			}
@@ -765,7 +765,7 @@ func devirt(v *Value, aux Aux, sym Sym, offset int64) *AuxCall {
 		return nil
 	}
 	va := aux.(*AuxCall)
-	return StaticAuxCall(lsym, va.args, va.results, va.abiInfo)
+	return StaticAuxCall(lsym, va.abiInfo)
 }
 
 // de-virtualize an InterLECall
@@ -859,13 +859,13 @@ func disjoint(p1 *Value, n1 int64, p2 *Value, n2 int64) bool {
 		if p2.Op == OpAddr || p2.Op == OpLocalAddr || p2.Op == OpSP {
 			return true
 		}
-		return p2.Op == OpArg && p1.Args[0].Op == OpSP
-	case OpArg:
+		return (p2.Op == OpArg || p2.Op == OpArgIntReg) && p1.Args[0].Op == OpSP
+	case OpArg, OpArgIntReg:
 		if p2.Op == OpSP || p2.Op == OpLocalAddr {
 			return true
 		}
 	case OpSP:
-		return p2.Op == OpAddr || p2.Op == OpLocalAddr || p2.Op == OpArg || p2.Op == OpSP
+		return p2.Op == OpAddr || p2.Op == OpLocalAddr || p2.Op == OpArg || p2.Op == OpArgIntReg || p2.Op == OpSP
 	}
 	return false
 }
@@ -1414,7 +1414,7 @@ func isPPC64WordRotateMask(v64 int64) bool {
 	return (v&vp == 0 || vn&vpn == 0) && v != 0
 }
 
-// Compress mask and and shift into single value of the form
+// Compress mask and shift into single value of the form
 // me | mb<<8 | rotate<<16 | nbits<<24 where me and mb can
 // be used to regenerate the input mask.
 func encodePPC64RotateMask(rotate, mask, nbits int64) int64 {
@@ -1492,7 +1492,7 @@ func mergePPC64AndSrwi(m, s int64) int64 {
 	if !isPPC64WordRotateMask(mask) {
 		return 0
 	}
-	return encodePPC64RotateMask(32-s, mask, 32)
+	return encodePPC64RotateMask((32-s)&31, mask, 32)
 }
 
 // Test if a shift right feeding into a CLRLSLDI can be merged into RLWINM.

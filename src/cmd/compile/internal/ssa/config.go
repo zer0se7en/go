@@ -6,12 +6,11 @@ package ssa
 
 import (
 	"cmd/compile/internal/abi"
-	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
-	"cmd/internal/objabi"
 	"cmd/internal/src"
+	"internal/buildcfg"
 )
 
 // A Config holds readonly compilation information.
@@ -148,13 +147,6 @@ type Frontend interface {
 
 	// Given the name for a compound type, returns the name we should use
 	// for the parts of that compound type.
-	SplitString(LocalSlot) (LocalSlot, LocalSlot)
-	SplitInterface(LocalSlot) (LocalSlot, LocalSlot)
-	SplitSlice(LocalSlot) (LocalSlot, LocalSlot, LocalSlot)
-	SplitComplex(LocalSlot) (LocalSlot, LocalSlot)
-	SplitStruct(LocalSlot, int) LocalSlot
-	SplitArray(LocalSlot) LocalSlot              // array must be length 1
-	SplitInt64(LocalSlot) (LocalSlot, LocalSlot) // returns (hi, lo)
 	SplitSlot(parent *LocalSlot, suffix string, offset int64, t *types.Type) LocalSlot
 
 	// DerefItab dereferences an itab function
@@ -204,7 +196,7 @@ func NewConfig(arch string, types Types, ctxt *obj.Link, optimize bool) *Config 
 		c.floatParamRegs = paramFloatRegAMD64
 		c.FPReg = framepointerRegAMD64
 		c.LinkReg = linkRegAMD64
-		c.hasGReg = base.Flag.ABIWrap
+		c.hasGReg = buildcfg.Experiment.RegabiG
 	case "386":
 		c.PtrSize = 4
 		c.RegSize = 4
@@ -239,7 +231,7 @@ func NewConfig(arch string, types Types, ctxt *obj.Link, optimize bool) *Config 
 		c.FPReg = framepointerRegARM64
 		c.LinkReg = linkRegARM64
 		c.hasGReg = true
-		c.noDuffDevice = objabi.GOOS == "darwin" || objabi.GOOS == "ios" // darwin linker cannot handle BR26 reloc with non-zero addend
+		c.noDuffDevice = buildcfg.GOOS == "darwin" || buildcfg.GOOS == "ios" // darwin linker cannot handle BR26 reloc with non-zero addend
 	case "ppc64":
 		c.BigEndian = true
 		fallthrough
@@ -337,7 +329,7 @@ func NewConfig(arch string, types Types, ctxt *obj.Link, optimize bool) *Config 
 	c.ABI1 = abi.NewABIConfig(len(c.intParamRegs), len(c.floatParamRegs), ctxt.FixedFrameSize())
 
 	// On Plan 9, floating point operations are not allowed in note handler.
-	if objabi.GOOS == "plan9" {
+	if buildcfg.GOOS == "plan9" {
 		// Don't use FMA on Plan 9
 		c.UseFMA = false
 

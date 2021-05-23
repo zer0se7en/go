@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/importer"
+	"go/internal/typeparams"
 	"go/parser"
 	"go/token"
 	"internal/testenv"
@@ -20,6 +21,11 @@ import (
 	. "go/types"
 )
 
+// pkgFor parses and type checks the package specified by path and source,
+// populating info if provided.
+//
+// If source begins with "package generic_" and type parameters are enabled,
+// generic code is permitted.
 func pkgFor(path, source string, info *Info) (*Package, error) {
 	fset := token.NewFileSet()
 	mode := modeForSource(source)
@@ -48,8 +54,8 @@ func mustTypecheck(t *testing.T, path, source string, info *Info) string {
 const genericPkg = "package generic_"
 
 func modeForSource(src string) parser.Mode {
-	if strings.HasPrefix(src, genericPkg) {
-		return parseTypeParams
+	if !strings.HasPrefix(src, genericPkg) {
+		return typeparams.DisallowParsing
 	}
 	return 0
 }
@@ -341,9 +347,16 @@ func TestTypesInfo(t *testing.T) {
 
 		// instantiated types must be sanitized
 		{genericPkg + `g0; type t[P any] int; var x struct{ f t[int] }; var _ = x.f`, `x.f`, `generic_g0.t[int]`},
+
+		// issue 45096
+		{genericPkg + `issue45096; func _[T interface{ type int8, int16, int32  }](x T) { _ = x < 0 }`, `0`, `T₁`},
 	}
 
 	for _, test := range tests {
+		ResetId() // avoid renumbering of type parameter ids when adding tests
+		if strings.HasPrefix(test.src, genericPkg) && !typeparams.Enabled {
+			continue
+		}
 		info := Info{Types: make(map[ast.Expr]TypeAndValue)}
 		var name string
 		if strings.HasPrefix(test.src, broken) {
@@ -388,6 +401,7 @@ func TestDefsInfo(t *testing.T) {
 		{`package p2; var x int`, `x`, `var p2.x int`},
 		{`package p3; type x int`, `x`, `type p3.x int`},
 		{`package p4; func f()`, `f`, `func p4.f()`},
+		{`package p5; func f() int { x, _ := 1, 2; return x }`, `_`, `var _ int`},
 
 		// generic types must be sanitized
 		// (need to use sufficiently nested types to provoke unexpanded types)
@@ -398,6 +412,9 @@ func TestDefsInfo(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		if strings.HasPrefix(test.src, genericPkg) && !typeparams.Enabled {
+			continue
+		}
 		info := Info{
 			Defs: make(map[*ast.Ident]Object),
 		}
@@ -443,6 +460,9 @@ func TestUsesInfo(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		if strings.HasPrefix(test.src, genericPkg) && !typeparams.Enabled {
+			continue
+		}
 		info := Info{
 			Uses: make(map[*ast.Ident]Object),
 		}
@@ -1200,6 +1220,8 @@ func TestLookupFieldOrMethod(t *testing.T) {
 	// Test cases assume a lookup of the form a.f or x.f, where a stands for an
 	// addressable value, and x for a non-addressable value (even though a variable
 	// for ease of test case writing).
+	//
+	// Should be kept in sync with TestMethodSet.
 	var tests = []struct {
 		src      string
 		found    bool
@@ -1410,6 +1432,9 @@ func TestConvertibleTo(t *testing.T) {
 		{newDefined(new(Struct)), new(Struct), true},
 		{newDefined(Typ[Int]), new(Struct), false},
 		{Typ[UntypedInt], Typ[Int], true},
+		{NewSlice(Typ[Int]), NewPointer(NewArray(Typ[Int], 10)), true},
+		{NewSlice(Typ[Int]), NewArray(Typ[Int], 10), false},
+		{NewSlice(Typ[Int]), NewPointer(NewArray(Typ[Uint], 10)), false},
 		// Untyped string values are not permitted by the spec, so the below
 		// behavior is undefined.
 		{Typ[UntypedString], Typ[String], true},

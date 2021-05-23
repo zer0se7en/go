@@ -136,7 +136,7 @@ func (n *BinaryExpr) SetOp(op Op) {
 		panic(n.no("SetOp " + op.String()))
 	case OADD, OADDSTR, OAND, OANDNOT, ODIV, OEQ, OGE, OGT, OLE,
 		OLSH, OLT, OMOD, OMUL, ONE, OOR, ORSH, OSUB, OXOR,
-		OCOPY, OCOMPLEX,
+		OCOPY, OCOMPLEX, OUNSAFEADD, OUNSAFESLICE,
 		OEFACE:
 		n.op = op
 	}
@@ -157,12 +157,13 @@ const (
 type CallExpr struct {
 	miniExpr
 	origNode
-	X         Node
-	Args      Nodes
-	KeepAlive []*Name // vars to be kept alive until call returns
-	IsDDD     bool
-	Use       CallUse
-	NoInline  bool
+	X               Node
+	Args            Nodes
+	KeepAlive       []*Name // vars to be kept alive until call returns
+	IsDDD           bool
+	Use             CallUse
+	NoInline        bool
+	PreserveClosure bool // disable directClosureCall for this call
 }
 
 func NewCallExpr(pos src.XPos, op Op, fun Node, args []Node) *CallExpr {
@@ -276,7 +277,7 @@ func (n *ConvExpr) SetOp(op Op) {
 	switch op {
 	default:
 		panic(n.no("SetOp " + op.String()))
-	case OCONV, OCONVIFACE, OCONVNOP, OBYTES2STR, OBYTES2STRTMP, ORUNES2STR, OSTR2BYTES, OSTR2BYTESTMP, OSTR2RUNES, ORUNESTR:
+	case OCONV, OCONVIFACE, OCONVNOP, OBYTES2STR, OBYTES2STRTMP, ORUNES2STR, OSTR2BYTES, OSTR2BYTESTMP, OSTR2RUNES, ORUNESTR, OSLICE2ARRPTR:
 		n.op = op
 	}
 }
@@ -527,6 +528,13 @@ func (n *SelectorExpr) FuncName() *Name {
 	fn := NewNameAt(n.Selection.Pos, MethodSym(n.X.Type(), n.Sel))
 	fn.Class = PFUNC
 	fn.SetType(n.Type())
+	if n.Selection.Nname != nil {
+		// TODO(austin): Nname is nil for interface method
+		// expressions (I.M), so we can't attach a Func to
+		// those here. reflectdata.methodWrapper generates the
+		// Func.
+		fn.Func = n.Selection.Nname.(*Name).Func
+	}
 	return fn
 }
 
@@ -1052,7 +1060,7 @@ func MethodSymSuffix(recv *types.Type, msym *types.Sym, suffix string) *types.Sy
 	return rpkg.LookupBytes(b.Bytes())
 }
 
-// MethodName returns the ONAME representing the method
+// MethodExprName returns the ONAME representing the method
 // referenced by expression n, which must be a method selector,
 // method expression, or method value.
 func MethodExprName(n Node) *Name {
@@ -1060,7 +1068,7 @@ func MethodExprName(n Node) *Name {
 	return name
 }
 
-// MethodFunc is like MethodName, but returns the types.Field instead.
+// MethodExprFunc is like MethodExprName, but returns the types.Field instead.
 func MethodExprFunc(n Node) *types.Field {
 	switch n.Op() {
 	case ODOTMETH, OMETHEXPR, OCALLPART:

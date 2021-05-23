@@ -53,8 +53,8 @@ const (
 	inlineBigFunctionMaxCost = 20   // Max cost of inlinee when inlining into a "big" function.
 )
 
+// InlinePackage finds functions that can be inlined and clones them before walk expands them.
 func InlinePackage() {
-	// Find functions that can be inlined and clone them before walk expands them.
 	ir.VisitFuncsBottomUp(typecheck.Target.Decls, func(list []*ir.Func, recursive bool) {
 		numfns := numNonClosures(list)
 		for _, n := range list {
@@ -74,8 +74,8 @@ func InlinePackage() {
 }
 
 // CanInline determines whether fn is inlineable.
-// If so, CanInline saves fn->nbody in fn->inl and substitutes it with a copy.
-// fn and ->nbody will already have been typechecked.
+// If so, CanInline saves copies of fn.Body and fn.Dcl in fn.Inl.
+// fn and fn.Body will already have been typechecked.
 func CanInline(fn *ir.Func) {
 	if fn.Nname == nil {
 		base.Fatalf("CanInline no nname %+v", fn)
@@ -506,7 +506,10 @@ func inlcopy(n ir.Node) ir.Node {
 			newfn.Nname = ir.NewNameAt(oldfn.Nname.Pos(), oldfn.Nname.Sym())
 			// XXX OK to share fn.Type() ??
 			newfn.Nname.SetType(oldfn.Nname.Type())
-			newfn.Nname.Ntype = inlcopy(oldfn.Nname.Ntype).(ir.Ntype)
+			// Ntype can be nil for -G=3 mode.
+			if oldfn.Nname.Ntype != nil {
+				newfn.Nname.Ntype = inlcopy(oldfn.Nname.Ntype).(ir.Ntype)
+			}
 			newfn.Body = inlcopylist(oldfn.Body)
 			// Make shallow copy of the Dcl and ClosureVar slices
 			newfn.Dcl = append([]*ir.Name(nil), oldfn.Dcl...)
@@ -517,7 +520,7 @@ func inlcopy(n ir.Node) ir.Node {
 	return edit(n)
 }
 
-// Inlcalls/nodelist/node walks fn's statements and expressions and substitutes any
+// InlineCalls/inlnode walks fn's statements and expressions and substitutes any
 // calls made to inlineable functions. This is the external entry point.
 func InlineCalls(fn *ir.Func) {
 	savefn := ir.CurFunc
@@ -999,6 +1002,7 @@ func mkinlcall(n *ir.CallExpr, fn *ir.Func, maxCost int32, inlMap map[*ir.Func]b
 		retvars:      retvars,
 		delayretvars: delayretvars,
 		inlvars:      inlvars,
+		defnMarker:   ir.NilExpr{},
 		bases:        make(map[*src.PosBase]*src.PosBase),
 		newInlIndex:  newIndex,
 		fn:           fn,
@@ -1010,7 +1014,9 @@ func mkinlcall(n *ir.CallExpr, fn *ir.Func, maxCost int32, inlMap map[*ir.Func]b
 	lab := ir.NewLabelStmt(base.Pos, retlabel)
 	body = append(body, lab)
 
-	typecheck.Stmts(body)
+	if !typecheck.Go117ExportTypes {
+		typecheck.Stmts(body)
+	}
 
 	if base.Flag.GenDwarfInl > 0 {
 		for _, v := range inlfvars {
@@ -1098,6 +1104,10 @@ type inlsubst struct {
 	delayretvars bool
 
 	inlvars map[*ir.Name]*ir.Name
+	// defnMarker is used to mark a Node for reassignment.
+	// inlsubst.clovar set this during creating new ONAME.
+	// inlsubst.node will set the correct Defn for inlvar.
+	defnMarker ir.NilExpr
 
 	// bases maps from original PosBase to PosBase with an extra
 	// inlined call frame.
@@ -1114,6 +1124,10 @@ type inlsubst struct {
 	newclofn *ir.Func
 
 	fn *ir.Func // For debug -- the func that is being inlined
+
+	// If true, then don't update source positions during substitution
+	// (retain old source positions).
+	noPosUpdate bool
 }
 
 // list inlines a list of nodes.
@@ -1155,7 +1169,11 @@ func (subst *inlsubst) clovar(n *ir.Name) *ir.Name {
 	m := &ir.Name{}
 	*m = *n
 	m.Curfn = subst.newclofn
-	if n.Defn != nil && n.Defn.Op() == ir.ONAME {
+
+	switch defn := n.Defn.(type) {
+	case nil:
+		// ok
+	case *ir.Name:
 		if !n.IsClosureVar() {
 			base.FatalfAt(n.Pos(), "want closure variable, got: %+v", n)
 		}
@@ -1177,7 +1195,15 @@ func (subst *inlsubst) clovar(n *ir.Name) *ir.Name {
 		if subst.inlvars[n.Defn.(*ir.Name)] != nil {
 			m.Defn = subst.node(n.Defn)
 		}
+	case *ir.AssignStmt, *ir.AssignListStmt:
+		// Mark node for reassignment at the end of inlsubst.node.
+		m.Defn = &subst.defnMarker
+	case *ir.TypeSwitchGuard:
+		// TODO(mdempsky): Set m.Defn properly. See discussion on #45743.
+	default:
+		base.FatalfAt(n.Pos(), "unexpected Defn: %+v", defn)
 	}
+
 	if n.Outer != nil {
 		// Either the outer variable is defined in function being inlined,
 		// and we will replace it with the substituted variable, or it is
@@ -1197,7 +1223,14 @@ func (subst *inlsubst) clovar(n *ir.Name) *ir.Name {
 // closure node.
 func (subst *inlsubst) closure(n *ir.ClosureExpr) ir.Node {
 	m := ir.Copy(n)
-	m.SetPos(subst.updatedPos(m.Pos()))
+
+	// Prior to the subst edit, set a flag in the inlsubst to
+	// indicated that we don't want to update the source positions in
+	// the new closure. If we do this, it will appear that the closure
+	// itself has things inlined into it, which is not the case. See
+	// issue #46234 for more details.
+	defer func(prev bool) { subst.noPosUpdate = prev }(subst.noPosUpdate)
+	subst.noPosUpdate = true
 	ir.EditChildren(m, subst.edit)
 
 	//fmt.Printf("Inlining func %v with closure into %v\n", subst.fn, ir.FuncName(ir.CurFunc))
@@ -1213,7 +1246,10 @@ func (subst *inlsubst) closure(n *ir.ClosureExpr) ir.Node {
 	newfn.SetIsHiddenClosure(true)
 	newfn.Nname = ir.NewNameAt(n.Pos(), ir.BlankNode.Sym())
 	newfn.Nname.Func = newfn
-	newfn.Nname.Ntype = subst.node(oldfn.Nname.Ntype).(ir.Ntype)
+	// Ntype can be nil for -G=3 mode.
+	if oldfn.Nname.Ntype != nil {
+		newfn.Nname.Ntype = subst.node(oldfn.Nname.Ntype).(ir.Ntype)
+	}
 	newfn.Nname.Defn = newfn
 
 	m.(*ir.ClosureExpr).Func = newfn
@@ -1369,6 +1405,10 @@ func (subst *inlsubst) node(n ir.Node) ir.Node {
 		return ir.NewBlockStmt(base.Pos, init)
 
 	case ir.OGOTO:
+		if subst.newclofn != nil {
+			// Don't do special substitutions if inside a closure
+			break
+		}
 		n := n.(*ir.BranchStmt)
 		m := ir.Copy(n).(*ir.BranchStmt)
 		m.SetPos(subst.updatedPos(m.Pos()))
@@ -1398,10 +1438,27 @@ func (subst *inlsubst) node(n ir.Node) ir.Node {
 	m := ir.Copy(n)
 	m.SetPos(subst.updatedPos(m.Pos()))
 	ir.EditChildren(m, subst.edit)
+
+	switch m := m.(type) {
+	case *ir.AssignStmt:
+		if lhs, ok := m.X.(*ir.Name); ok && lhs.Defn == &subst.defnMarker {
+			lhs.Defn = m
+		}
+	case *ir.AssignListStmt:
+		for _, lhs := range m.Lhs {
+			if lhs, ok := lhs.(*ir.Name); ok && lhs.Defn == &subst.defnMarker {
+				lhs.Defn = m
+			}
+		}
+	}
+
 	return m
 }
 
 func (subst *inlsubst) updatedPos(xpos src.XPos) src.XPos {
+	if subst.noPosUpdate {
+		return xpos
+	}
 	pos := base.Ctxt.PosTable.Pos(xpos)
 	oldbase := pos.Base() // can be nil
 	newbase := subst.bases[oldbase]

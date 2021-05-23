@@ -10,6 +10,7 @@ import (
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"fmt"
+	"strings"
 )
 
 // An Op encodes the specific operation that a Value performs.
@@ -68,14 +69,28 @@ type regInfo struct {
 	outputs []outputInfo
 }
 
-type auxType int8
-
-type Param struct {
-	Type   *types.Type
-	Offset int32 // Offset of Param if not in a register, spill offset if it is in a register input, types.BADWIDTH if it is a register output.
-	Reg    []abi.RegIndex
-	Name   *ir.Name // For OwnAux, need to prepend stores with Vardefs
+func (r *regInfo) String() string {
+	s := ""
+	s += "INS:\n"
+	for _, i := range r.inputs {
+		mask := fmt.Sprintf("%64b", i.regs)
+		mask = strings.Replace(mask, "0", ".", -1)
+		s += fmt.Sprintf("%2d |%s|\n", i.idx, mask)
+	}
+	s += "OUTS:\n"
+	for _, i := range r.outputs {
+		mask := fmt.Sprintf("%64b", i.regs)
+		mask = strings.Replace(mask, "0", ".", -1)
+		s += fmt.Sprintf("%2d |%s|\n", i.idx, mask)
+	}
+	s += "CLOBBERS:\n"
+	mask := fmt.Sprintf("%64b", r.clobbers)
+	mask = strings.Replace(mask, "0", ".", -1)
+	s += fmt.Sprintf("   |%s|\n", mask)
+	return s
 }
+
+type auxType int8
 
 type AuxNameOffset struct {
 	Name   *ir.Name
@@ -88,12 +103,9 @@ func (a *AuxNameOffset) String() string {
 }
 
 type AuxCall struct {
-	// TODO(register args) this information is largely redundant with ../abi information, needs cleanup once new ABI is in place.
 	Fn      *obj.LSym
-	args    []Param // Includes receiver for method calls.  Does NOT include hidden closure pointer.
-	results []Param
-	reg     *regInfo                // regInfo for this call // TODO for now nil means ignore
-	abiInfo *abi.ABIParamResultInfo // TODO remove fields above redundant with this information.
+	reg     *regInfo // regInfo for this call
+	abiInfo *abi.ABIParamResultInfo
 }
 
 // Reg returns the regInfo for a given call, combining the derived in/out register masks
@@ -116,25 +128,33 @@ func (a *AuxCall) Reg(i *regInfo, c *Config) *regInfo {
 		a.reg = i
 		return a.reg
 	}
-	a.reg.inputs = append(a.reg.inputs, i.inputs...)
+
+	k := len(i.inputs)
 	for _, p := range a.abiInfo.InParams() {
 		for _, r := range p.Registers {
 			m := archRegForAbiReg(r, c)
-			a.reg.inputs = append(a.reg.inputs, inputInfo{idx: len(a.reg.inputs), regs: (1 << m)})
+			a.reg.inputs = append(a.reg.inputs, inputInfo{idx: k, regs: (1 << m)})
+			k++
 		}
 	}
-	a.reg.outputs = append(a.reg.outputs, i.outputs...)
+	a.reg.inputs = append(a.reg.inputs, i.inputs...) // These are less constrained, thus should come last
+	k = len(i.outputs)
 	for _, p := range a.abiInfo.OutParams() {
 		for _, r := range p.Registers {
 			m := archRegForAbiReg(r, c)
-			a.reg.outputs = append(a.reg.outputs, outputInfo{idx: len(a.reg.outputs), regs: (1 << m)})
+			a.reg.outputs = append(a.reg.outputs, outputInfo{idx: k, regs: (1 << m)})
+			k++
 		}
 	}
+	a.reg.outputs = append(a.reg.outputs, i.outputs...)
 	a.reg.clobbers = i.clobbers
 	return a.reg
 }
 func (a *AuxCall) ABI() *abi.ABIConfig {
 	return a.abiInfo.Config()
+}
+func (a *AuxCall) ABIInfo() *abi.ABIParamResultInfo {
+	return a.abiInfo
 }
 func (a *AuxCall) ResultReg(c *Config) *regInfo {
 	if a.abiInfo.OutRegistersUsed() == 0 {
@@ -154,6 +174,8 @@ func (a *AuxCall) ResultReg(c *Config) *regInfo {
 	return a.reg
 }
 
+// For ABI register index r, returns the (dense) register number used in
+// SSA backend.
 func archRegForAbiReg(r abi.RegIndex, c *Config) uint8 {
 	var m int8
 	if int(r) < len(c.intParamRegs) {
@@ -164,7 +186,24 @@ func archRegForAbiReg(r abi.RegIndex, c *Config) uint8 {
 	return uint8(m)
 }
 
-// OffsetOfResult returns the SP offset of result which (indexed 0, 1, etc).
+// For ABI register index r, returns the register number used in the obj
+// package (assembler).
+func ObjRegForAbiReg(r abi.RegIndex, c *Config) int16 {
+	m := archRegForAbiReg(r, c)
+	return c.registers[m].objNum
+}
+
+// ArgWidth returns the amount of stack needed for all the inputs
+// and outputs of a function or method, including ABI-defined parameter
+// slots and ABI-defined spill slots for register-resident parameters.
+//
+// The name is taken from the types package's ArgWidth(<function type>),
+// which predated changes to the ABI; this version handles those changes.
+func (a *AuxCall) ArgWidth() int64 {
+	return a.abiInfo.ArgWidth()
+}
+
+// ParamAssignmentForResult returns the ABI Parameter assignment for result which (indexed 0, 1, etc).
 func (a *AuxCall) ParamAssignmentForResult(which int64) *abi.ABIParamAssignment {
 	return a.abiInfo.OutParam(int(which))
 }
@@ -191,6 +230,15 @@ func (a *AuxCall) RegsOfResult(which int64) []abi.RegIndex {
 // If the call is to a method, the receiver is the first argument (i.e., index 0)
 func (a *AuxCall) RegsOfArg(which int64) []abi.RegIndex {
 	return a.abiInfo.InParam(int(which)).Registers
+}
+
+// NameOfResult returns the type of result which (indexed 0, 1, etc).
+func (a *AuxCall) NameOfResult(which int64) *ir.Name {
+	name := a.abiInfo.OutParam(int(which)).Name
+	if name == nil {
+		return nil
+	}
+	return name.(*ir.Name)
 }
 
 // TypeOfResult returns the type of result which (indexed 0, 1, etc).
@@ -236,10 +284,7 @@ func (a *AuxCall) NArgs() int64 {
 	return int64(len(a.abiInfo.InParams()))
 }
 
-// String returns
-// "AuxCall{<fn>(<args>)}"             if len(results) == 0;
-// "AuxCall{<fn>(<args>)<results[0]>}" if len(results) == 1;
-// "AuxCall{<fn>(<args>)(<results>)}"  otherwise.
+// String returns "AuxCall{<fn>}"
 func (a *AuxCall) String() string {
 	var fn string
 	if a.Fn == nil {
@@ -247,46 +292,13 @@ func (a *AuxCall) String() string {
 	} else {
 		fn = fmt.Sprintf("AuxCall{%v", a.Fn)
 	}
-
-	if len(a.args) == 0 {
-		fn += "()"
-	} else {
-		s := "("
-		for _, arg := range a.args {
-			fn += fmt.Sprintf("%s[%v,%v]", s, arg.Type, arg.Offset)
-			s = ","
-		}
-		fn += ")"
-	}
-
-	if len(a.results) > 0 { // usual is zero or one; only some RT calls have more than one.
-		if len(a.results) == 1 {
-			fn += fmt.Sprintf("[%v,%v]", a.results[0].Type, a.results[0].Offset)
-		} else {
-			s := "("
-			for _, result := range a.results {
-				fn += fmt.Sprintf("%s[%v,%v]", s, result.Type, result.Offset)
-				s = ","
-			}
-			fn += ")"
-		}
-	}
+	// TODO how much of the ABI should be printed?
 
 	return fn + "}"
 }
 
-// ACParamsToTypes translates a slice of Param into a slice of *types.Type
-// This is a helper call for ssagen/ssa.go.
-// TODO remove this, as part of replacing fields of AuxCall with abi.ABIParamResultInfo.
-func ACParamsToTypes(ps []Param) (ts []*types.Type) {
-	for _, p := range ps {
-		ts = append(ts, p.Type)
-	}
-	return
-}
-
 // StaticAuxCall returns an AuxCall for a static call.
-func StaticAuxCall(sym *obj.LSym, args []Param, results []Param, paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
+func StaticAuxCall(sym *obj.LSym, paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
 	if paramResultInfo == nil {
 		panic(fmt.Errorf("Nil paramResultInfo, sym=%v", sym))
 	}
@@ -294,29 +306,37 @@ func StaticAuxCall(sym *obj.LSym, args []Param, results []Param, paramResultInfo
 	if paramResultInfo.InRegistersUsed()+paramResultInfo.OutRegistersUsed() > 0 {
 		reg = &regInfo{}
 	}
-	return &AuxCall{Fn: sym, args: args, results: results, abiInfo: paramResultInfo, reg: reg}
+	return &AuxCall{Fn: sym, abiInfo: paramResultInfo, reg: reg}
 }
 
 // InterfaceAuxCall returns an AuxCall for an interface call.
-func InterfaceAuxCall(args []Param, results []Param, paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
-	return &AuxCall{Fn: nil, args: args, results: results, abiInfo: paramResultInfo}
+func InterfaceAuxCall(paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
+	var reg *regInfo
+	if paramResultInfo.InRegistersUsed()+paramResultInfo.OutRegistersUsed() > 0 {
+		reg = &regInfo{}
+	}
+	return &AuxCall{Fn: nil, abiInfo: paramResultInfo, reg: reg}
 }
 
 // ClosureAuxCall returns an AuxCall for a closure call.
-func ClosureAuxCall(args []Param, results []Param, paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
-	return &AuxCall{Fn: nil, args: args, results: results, abiInfo: paramResultInfo}
+func ClosureAuxCall(paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
+	var reg *regInfo
+	if paramResultInfo.InRegistersUsed()+paramResultInfo.OutRegistersUsed() > 0 {
+		reg = &regInfo{}
+	}
+	return &AuxCall{Fn: nil, abiInfo: paramResultInfo, reg: reg}
 }
 
 func (*AuxCall) CanBeAnSSAAux() {}
 
 // OwnAuxCall returns a function's own AuxCall
-func OwnAuxCall(fn *obj.LSym, args []Param, results []Param, paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
+func OwnAuxCall(fn *obj.LSym, paramResultInfo *abi.ABIParamResultInfo) *AuxCall {
 	// TODO if this remains identical to ClosureAuxCall above after new ABI is done, should deduplicate.
 	var reg *regInfo
 	if paramResultInfo.InRegistersUsed()+paramResultInfo.OutRegistersUsed() > 0 {
 		reg = &regInfo{}
 	}
-	return &AuxCall{Fn: fn, args: args, results: results, abiInfo: paramResultInfo, reg: reg}
+	return &AuxCall{Fn: fn, abiInfo: paramResultInfo, reg: reg}
 }
 
 const (
@@ -382,13 +402,13 @@ type Sym interface {
 // The low 32 bits hold a pointer offset.
 type ValAndOff int64
 
-func (x ValAndOff) Val() int64   { return int64(x) >> 32 }
-func (x ValAndOff) Val32() int32 { return int32(int64(x) >> 32) }
+func (x ValAndOff) Val() int32   { return int32(int64(x) >> 32) }
+func (x ValAndOff) Val64() int64 { return int64(x) >> 32 }
 func (x ValAndOff) Val16() int16 { return int16(int64(x) >> 32) }
 func (x ValAndOff) Val8() int8   { return int8(int64(x) >> 32) }
 
-func (x ValAndOff) Off() int64   { return int64(int32(x)) }
-func (x ValAndOff) Off32() int32 { return int32(x) }
+func (x ValAndOff) Off64() int64 { return int64(int32(x)) }
+func (x ValAndOff) Off() int32   { return int32(x) }
 
 func (x ValAndOff) String() string {
 	return fmt.Sprintf("val=%d,off=%d", x.Val(), x.Off())
@@ -400,40 +420,16 @@ func validVal(val int64) bool {
 	return val == int64(int32(val))
 }
 
-// validOff reports whether the offset can be used
-// as an argument to makeValAndOff.
-func validOff(off int64) bool {
-	return off == int64(int32(off))
-}
-
-// validValAndOff reports whether we can fit the value and offset into
-// a ValAndOff value.
-func validValAndOff(val, off int64) bool {
-	if !validVal(val) {
-		return false
-	}
-	if !validOff(off) {
-		return false
-	}
-	return true
-}
-
-func makeValAndOff32(val, off int32) ValAndOff {
+func makeValAndOff(val, off int32) ValAndOff {
 	return ValAndOff(int64(val)<<32 + int64(uint32(off)))
-}
-func makeValAndOff64(val, off int64) ValAndOff {
-	if !validValAndOff(val, off) {
-		panic("invalid makeValAndOff64")
-	}
-	return ValAndOff(val<<32 + int64(uint32(off)))
 }
 
 func (x ValAndOff) canAdd32(off int32) bool {
-	newoff := x.Off() + int64(off)
+	newoff := x.Off64() + int64(off)
 	return newoff == int64(int32(newoff))
 }
 func (x ValAndOff) canAdd64(off int64) bool {
-	newoff := x.Off() + off
+	newoff := x.Off64() + off
 	return newoff == int64(int32(newoff))
 }
 
@@ -441,13 +437,13 @@ func (x ValAndOff) addOffset32(off int32) ValAndOff {
 	if !x.canAdd32(off) {
 		panic("invalid ValAndOff.addOffset32")
 	}
-	return makeValAndOff64(x.Val(), x.Off()+int64(off))
+	return makeValAndOff(x.Val(), x.Off()+off)
 }
 func (x ValAndOff) addOffset64(off int64) ValAndOff {
 	if !x.canAdd64(off) {
 		panic("invalid ValAndOff.addOffset64")
 	}
-	return makeValAndOff64(x.Val(), x.Off()+off)
+	return makeValAndOff(x.Val(), x.Off()+int32(off))
 }
 
 // int128 is a type that stores a 128-bit constant.
@@ -473,6 +469,7 @@ const (
 	BoundsSlice3BU                      // ... with unsigned high
 	BoundsSlice3C                       // 3-arg slicing operation, 0 <= low <= high failed
 	BoundsSlice3CU                      // ... with unsigned low
+	BoundsConvert                       // conversion to array pointer failed
 	BoundsKindCount
 )
 
@@ -500,7 +497,8 @@ func boundsABI(b int64) int {
 	case BoundsSlice3Alen,
 		BoundsSlice3AlenU,
 		BoundsSlice3Acap,
-		BoundsSlice3AcapU:
+		BoundsSlice3AcapU,
+		BoundsConvert:
 		return 0
 	case BoundsSliceAlen,
 		BoundsSliceAlenU,

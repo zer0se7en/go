@@ -6,7 +6,6 @@ package syscall_test
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,7 +51,7 @@ func TestChangingProcessParent(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") == "parent" {
 		// in parent process
 
-		// Parent does nothign. It is just used as a parent of a child process.
+		// Parent does nothing. It is just used as a parent of a child process.
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	}
@@ -106,7 +105,7 @@ func TestChangingProcessParent(t *testing.T) {
 	if err != nil {
 		t.Errorf("child failed: %v: %v", err, string(childOutput))
 	}
-	childOutput, err = ioutil.ReadFile(childDumpPath)
+	childOutput, err = os.ReadFile(childDumpPath)
 	if err != nil {
 		t.Fatalf("reading child output failed: %v", err)
 	}

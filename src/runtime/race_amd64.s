@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build race
 // +build race
 
 #include "go_asm.h"
 #include "go_tls.h"
 #include "funcdata.h"
 #include "textflag.h"
+#include "cgo/abi_amd64.h"
 
 // The following thunks allow calling the gcc-compiled race runtime directly
 // from Go code without going all the way through cgo.
@@ -44,7 +46,11 @@
 // Defined as ABIInternal so as to avoid introducing a wrapper,
 // which would render runtime.getcallerpc ineffective.
 TEXT	runtime·raceread<ABIInternal>(SB), NOSPLIT, $0-8
+#ifdef GOEXPERIMENT_regabiargs
+	MOVQ	AX, RARG1
+#else
 	MOVQ	addr+0(FP), RARG1
+#endif
 	MOVQ	(SP), RARG2
 	// void __tsan_read(ThreadState *thr, void *addr, void *pc);
 	MOVQ	$__tsan_read(SB), AX
@@ -70,7 +76,11 @@ TEXT	runtime·racereadpc(SB), NOSPLIT, $0-24
 // Defined as ABIInternal so as to avoid introducing a wrapper,
 // which would render runtime.getcallerpc ineffective.
 TEXT	runtime·racewrite<ABIInternal>(SB), NOSPLIT, $0-8
+#ifdef GOEXPERIMENT_regabiargs
+	MOVQ	AX, RARG1
+#else
 	MOVQ	addr+0(FP), RARG1
+#endif
 	MOVQ	(SP), RARG2
 	// void __tsan_write(ThreadState *thr, void *addr, void *pc);
 	MOVQ	$__tsan_write(SB), AX
@@ -121,8 +131,13 @@ TEXT	runtime·racereadrangepc1(SB), NOSPLIT, $0-24
 // Defined as ABIInternal so as to avoid introducing a wrapper,
 // which would render runtime.getcallerpc ineffective.
 TEXT	runtime·racewriterange<ABIInternal>(SB), NOSPLIT, $0-16
+#ifdef GOEXPERIMENT_regabiargs
+	MOVQ	AX, RARG1
+	MOVQ	BX, RARG2
+#else
 	MOVQ	addr+0(FP), RARG1
 	MOVQ	size+8(FP), RARG2
+#endif
 	MOVQ	(SP), RARG3
 	// void __tsan_write_range(ThreadState *thr, void *addr, uintptr size, void *pc);
 	MOVQ	$__tsan_write_range(SB), AX
@@ -146,7 +161,7 @@ TEXT	runtime·racewriterangepc1(SB), NOSPLIT, $0-24
 // If addr (RARG1) is out of range, do nothing.
 // Otherwise, setup goroutine context and invoke racecall. Other arguments already set.
 TEXT	racecalladdr<>(SB), NOSPLIT, $0-0
-#ifndef GOEXPERIMENT_REGABI
+#ifndef GOEXPERIMENT_regabig
 	get_tls(R12)
 	MOVQ	g(R12), R14
 #endif
@@ -177,7 +192,7 @@ TEXT	runtime·racefuncenter(SB), NOSPLIT, $0-8
 // R11 = caller's return address
 TEXT	racefuncenter<>(SB), NOSPLIT, $0-0
 	MOVQ	DX, BX		// save function entry context (for closures)
-#ifndef GOEXPERIMENT_REGABI
+#ifndef GOEXPERIMENT_regabig
 	get_tls(R12)
 	MOVQ	g(R12), R14
 #endif
@@ -193,7 +208,7 @@ TEXT	racefuncenter<>(SB), NOSPLIT, $0-0
 // func runtime·racefuncexit()
 // Called from instrumented code.
 TEXT	runtime·racefuncexit(SB), NOSPLIT, $0-0
-#ifndef GOEXPERIMENT_REGABI
+#ifndef GOEXPERIMENT_regabig
 	get_tls(R12)
 	MOVQ	g(R12), R14
 #endif
@@ -355,7 +370,7 @@ racecallatomic_data:
 	JAE	racecallatomic_ignore
 racecallatomic_ok:
 	// Addr is within the good range, call the atomic function.
-#ifndef GOEXPERIMENT_REGABI
+#ifndef GOEXPERIMENT_regabig
 	get_tls(R12)
 	MOVQ	g(R12), R14
 #endif
@@ -370,7 +385,7 @@ racecallatomic_ignore:
 	// An attempt to synchronize on the address would cause crash.
 	MOVQ	AX, BX	// remember the original function
 	MOVQ	$__tsan_go_ignore_sync_begin(SB), AX
-#ifndef GOEXPERIMENT_REGABI
+#ifndef GOEXPERIMENT_regabig
 	get_tls(R12)
 	MOVQ	g(R12), R14
 #endif
@@ -401,7 +416,7 @@ TEXT	runtime·racecall(SB), NOSPLIT, $0-0
 
 // Switches SP to g0 stack and calls (AX). Arguments already set.
 TEXT	racecall<>(SB), NOSPLIT, $0-0
-#ifndef GOEXPERIMENT_REGABI
+#ifndef GOEXPERIMENT_regabig
 	get_tls(R12)
 	MOVQ	g(R12), R14
 #endif
@@ -428,7 +443,7 @@ call:
 // See racecallback for command codes.
 // Defined as ABIInternal so as to avoid introducing a wrapper,
 // because its address is passed to C via funcPC.
-TEXT	runtime·racecallbackthunk<ABIInternal>(SB), NOSPLIT, $56-8
+TEXT	runtime·racecallbackthunk<ABIInternal>(SB), NOSPLIT, $0-0
 	// Handle command raceGetProcCmd (0) here.
 	// First, code below assumes that we are on curg, while raceGetProcCmd
 	// can be executed on g0. Second, it is called frequently, so will
@@ -444,16 +459,8 @@ TEXT	runtime·racecallbackthunk<ABIInternal>(SB), NOSPLIT, $56-8
 	RET
 
 rest:
-	// Save callee-saved registers (Go code won't respect that).
-	// This is superset of darwin/linux/windows registers.
-	PUSHQ	BX
-	PUSHQ	BP
-	PUSHQ	DI
-	PUSHQ	SI
-	PUSHQ	R12
-	PUSHQ	R13
-	PUSHQ	R14
-	PUSHQ	R15
+	// Transition from C ABI to Go ABI.
+	PUSH_REGS_HOST_TO_ABI0()
 	// Set g = g0.
 	get_tls(R12)
 	MOVQ	g(R12), R14
@@ -475,15 +482,7 @@ rest:
 	MOVQ	m_curg(R13), R14
 	MOVQ	R14, g(R12)	// g = m->curg
 ret:
-	// Restore callee-saved registers.
-	POPQ	R15
-	POPQ	R14
-	POPQ	R13
-	POPQ	R12
-	POPQ	SI
-	POPQ	DI
-	POPQ	BP
-	POPQ	BX
+	POP_REGS_HOST_TO_ABI0()
 	RET
 
 noswitch:

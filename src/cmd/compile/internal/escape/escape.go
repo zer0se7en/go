@@ -587,7 +587,7 @@ func (e *escape) exprSkipInit(k hole, n ir.Node) {
 
 	switch n.Op() {
 	default:
-		base.Fatalf("unexpected expr: %v", n)
+		base.Fatalf("unexpected expr: %s %v", n.Op().String(), n)
 
 	case ir.OLITERAL, ir.ONIL, ir.OGETG, ir.OTYPE, ir.OMETHEXPR, ir.OLINKSYMOFFSET:
 		// nop
@@ -669,12 +669,15 @@ func (e *escape) exprSkipInit(k hole, n ir.Node) {
 			k = e.spill(k, n)
 		}
 		e.expr(k.note(n, "interface-converted"), n.X)
-
+	case ir.OSLICE2ARRPTR:
+		// the slice pointer flows directly to the result
+		n := n.(*ir.ConvExpr)
+		e.expr(k, n.X)
 	case ir.ORECV:
 		n := n.(*ir.UnaryExpr)
 		e.discard(n.X)
 
-	case ir.OCALLMETH, ir.OCALLFUNC, ir.OCALLINTER, ir.OLEN, ir.OCAP, ir.OCOMPLEX, ir.OREAL, ir.OIMAG, ir.OAPPEND, ir.OCOPY:
+	case ir.OCALLMETH, ir.OCALLFUNC, ir.OCALLINTER, ir.OLEN, ir.OCAP, ir.OCOMPLEX, ir.OREAL, ir.OIMAG, ir.OAPPEND, ir.OCOPY, ir.OUNSAFEADD, ir.OUNSAFESLICE:
 		e.call([]hole{k}, n, nil)
 
 	case ir.ONEW:
@@ -1098,6 +1101,11 @@ func (e *escape) call(ks []hole, call, where ir.Node) {
 	case ir.OLEN, ir.OCAP, ir.OREAL, ir.OIMAG, ir.OCLOSE:
 		call := call.(*ir.UnaryExpr)
 		argument(e.discardHole(), call.X)
+
+	case ir.OUNSAFEADD, ir.OUNSAFESLICE:
+		call := call.(*ir.BinaryExpr)
+		argument(ks[0], call.X)
+		argument(e.discardHole(), call.Y)
 	}
 }
 
@@ -1292,7 +1300,7 @@ func (e *escape) newLoc(n ir.Node, transient bool) *location {
 		if n.Op() == ir.ONAME {
 			n := n.(*ir.Name)
 			if n.Curfn != e.curfn {
-				base.Fatalf("curfn mismatch: %v != %v", n.Curfn, e.curfn)
+				base.Fatalf("curfn mismatch: %v != %v for %v", n.Curfn, e.curfn, n)
 			}
 
 			if n.Opt != nil {
@@ -1305,6 +1313,9 @@ func (e *escape) newLoc(n ir.Node, transient bool) *location {
 }
 
 func (b *batch) oldLoc(n *ir.Name) *location {
+	if n.Canonical().Opt == nil {
+		base.Fatalf("%v has no location", n)
+	}
 	return n.Canonical().Opt.(*location)
 }
 

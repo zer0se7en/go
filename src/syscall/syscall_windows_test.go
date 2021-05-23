@@ -5,21 +5,18 @@
 package syscall_test
 
 import (
+	"fmt"
+	"internal/testenv"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"syscall"
 	"testing"
-	"time"
-	"unsafe"
 )
 
 func TestWin32finddata(t *testing.T) {
-	dir, err := os.MkdirTemp("", "go-build")
-	if err != nil {
-		t.Fatalf("failed to create temp directory: %v", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	path := filepath.Join(dir, "long_name.and_extension")
 	f, err := os.Create(path)
@@ -79,35 +76,63 @@ func TestTOKEN_ALL_ACCESS(t *testing.T) {
 	}
 }
 
-func TestProcThreadAttributeListPointers(t *testing.T) {
-	list, err := syscall.NewProcThreadAttributeList(1)
+func TestStdioAreInheritable(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	testenv.MustHaveExecPath(t, "gcc")
+
+	tmpdir := t.TempDir()
+
+	// build go dll
+	const dlltext = `
+package main
+
+import "C"
+import (
+	"fmt"
+)
+
+//export HelloWorld
+func HelloWorld() {
+	fmt.Println("Hello World")
+}
+
+func main() {}
+`
+	dllsrc := filepath.Join(tmpdir, "helloworld.go")
+	err := os.WriteFile(dllsrc, []byte(dlltext), 0644)
 	if err != nil {
-		t.Errorf("unable to create ProcThreadAttributeList: %v", err)
+		t.Fatal(err)
 	}
-	done := make(chan struct{})
-	fds := make([]syscall.Handle, 20)
-	runtime.SetFinalizer(&fds[0], func(*syscall.Handle) {
-		close(done)
-	})
-	err = syscall.UpdateProcThreadAttribute(list, 0, syscall.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&fds[0]), uintptr(len(fds))*unsafe.Sizeof(fds[0]), nil, nil)
+	dll := filepath.Join(tmpdir, "helloworld.dll")
+	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", dll, "-buildmode", "c-shared", dllsrc)
+	out, err := testenv.CleanCmdEnv(cmd).CombinedOutput()
 	if err != nil {
-		syscall.DeleteProcThreadAttributeList(list)
-		t.Errorf("unable to update ProcThreadAttributeList: %v", err)
-		return
+		t.Fatalf("failed to build go library: %s\n%s", err, out)
 	}
-	runtime.GC()
-	runtime.GC()
-	select {
-	case <-done:
-		t.Error("ProcThreadAttributeList was garbage collected unexpectedly")
-	default:
+
+	// run powershell script
+	psscript := fmt.Sprintf(`
+hostname;
+$signature = " [DllImport("%q")] public static extern void HelloWorld(); ";
+Add-Type -MemberDefinition $signature -Name World -Namespace Hello;
+[Hello.World]::HelloWorld();
+hostname;
+`, dll)
+	psscript = strings.ReplaceAll(psscript, "\n", "")
+	out, err = exec.Command("powershell", "-Command", psscript).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Powershell command failed: %v: %v", err, string(out))
 	}
-	syscall.DeleteProcThreadAttributeList(list)
-	runtime.GC()
-	runtime.GC()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Error("ProcThreadAttributeList was not garbage collected after a second")
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	have := strings.ReplaceAll(string(out), "\n", "")
+	have = strings.ReplaceAll(have, "\r", "")
+	want := fmt.Sprintf("%sHello World%s", hostname, hostname)
+	if have != want {
+		t.Fatalf("Powershell command output is wrong: got %q, want %q", have, want)
 	}
 }
